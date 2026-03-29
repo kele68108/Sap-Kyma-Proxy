@@ -5,8 +5,13 @@ import shlex
 from playwright.async_api import async_playwright
 import app.k8s_deployer as deployer
 
+# ==========================================
+# 环境变量加载
+# ==========================================
 SAP_USER = os.getenv("SAP_USER")
 SAP_PASS = os.getenv("SAP_PASS")
+# 新增：子账户名称变量，默认 fallback 到 "SG-AZ"
+SAP_SUBACCOUNT = os.getenv("SAP_SUBACCOUNT", "SG-AZ") 
 
 async def run_full_flow(logger):
     if not SAP_USER or not SAP_PASS:
@@ -21,7 +26,7 @@ async def run_full_flow(logger):
                 '--disable-dev-shm-usage',  
                 '--disable-gpu',
                 '--disable-blink-features=AutomationControlled',
-                '--disable-web-security' # 额外防护：禁用 Web 安全策略，防止跨域 iframe 阻断
+                '--disable-web-security'
             ]
         )
         
@@ -67,7 +72,7 @@ async def run_full_flow(logger):
             await page.locator("button#logOnFormSubmit, button[type='submit']").click(force=True)
             
             # ==========================================
-            # 🌟 第二阶段：全域暴力状态机 (无视 CSS 遮罩)
+            # 🌟 第二阶段：全域暴力状态机 (无视前端遮罩)
             # ==========================================
             await logger.broadcast("📡 开启全域暴力状态机，无视前端遮罩执行扫描 (最高 90 秒)...")
             
@@ -76,41 +81,30 @@ async def run_full_flow(logger):
                 frames_to_check = [page] + page.frames
                 
                 for frame in frames_to_check:
-                    # 状态 1：拦截墙 (使用正则 + count 暴力探查)
                     try:
-                        # 放弃 is_visible，直接正则匹配 HTML 源码，只要存在就强杀
                         wall_btn = frame.locator("text=/仍然继续|Continue anyway|仍要继续/i").first
                         if await wall_btn.count() > 0:
                             await logger.broadcast(f"⚠️ 发现拦截墙代码，正在执行原生穿甲点击...")
-                            
-                            # 终极点击：不管是谁绑定的事件，当前节点和父节点各点一次
                             await wall_btn.evaluate("""node => {
                                 if(node.click) node.click();
                                 if(node.parentElement && node.parentElement.click) node.parentElement.click();
                                 if(node.parentNode && node.parentNode.click) node.parentNode.click();
                             }""")
-                            
-                            # Playwright 强制再补一枪
-                            try:
-                                await wall_btn.click(force=True, timeout=1000)
+                            try: await wall_btn.click(force=True, timeout=1000)
                             except: pass
-                            
                             await asyncio.sleep(4) 
                     except: pass
 
-                    # 状态 2：欢迎页按钮
                     try:
                         home_btn = frame.locator("text=/转到您的试用账户|Go To Your Trial Account|Enter Your Trial Account/i").first
                         if await home_btn.count() > 0:
                             await logger.broadcast("👉 发现欢迎页，正在点击『转到您的试用账户』...")
-                            try:
-                                await home_btn.evaluate("node => node.click()")
+                            try: await home_btn.evaluate("node => node.click()")
                             except: pass
                             await home_btn.click(force=True, timeout=1000)
                             await asyncio.sleep(3)
                     except: pass
 
-                    # 状态 3：弹窗协议
                     try:
                         ok_btn = frame.locator("text=/OK|Accept All/i").locator("visible=true").first
                         if await ok_btn.count() > 0:
@@ -121,34 +115,67 @@ async def run_full_flow(logger):
                             await asyncio.sleep(2) 
                     except: pass
 
-                # 状态 4：成功判定 (看到 SG-AZ 或 Kyma 就算成功)
                 try:
-                    target_locator = page.locator("text=/SG-AZ|Kyma Environment|Kyma 环境/i").first
+                    # 动态注入子账户变量进行匹配
+                    target_locator = page.locator(f"text=/{SAP_SUBACCOUNT}|Kyma Environment|Kyma 环境/i").first
                     if await target_locator.count() > 0:
                         await logger.broadcast("✅ 导航成功，已到达目标账户层级！")
                         target_reached = True
                         break
                 except: pass
 
-                await asyncio.sleep(1) # 每秒扫描一次
+                await asyncio.sleep(1) 
 
             if not target_reached:
                 raise Exception("状态机导航超时，未能在 90 秒内到达账户浏览器！")
 
             # ==========================================
-            # 第三阶段：进入 Kyma 并判断状态
+            # 🌟 第三阶段：进入 Kyma、击杀弹窗与无遮拦扫描
             # ==========================================
-            await logger.broadcast("🖱️ 正在寻找并进入子账户 (SG-AZ)...")
+            await logger.broadcast(f"🖱️ 正在寻找并进入子账户 ({SAP_SUBACCOUNT})...")
             kyma_target = page.locator("text=/Kyma Environment|Kyma 环境/i").first
             if await kyma_target.count() == 0:
-                subaccount_card = page.locator("text=/SG-AZ/i").first
+                # 动态点击子账户卡片
+                subaccount_card = page.locator(f"text=/{SAP_SUBACCOUNT}/i").first
                 if await subaccount_card.count() == 0:
                     subaccount_card = page.locator("text=/trial/i").nth(1)
                 await subaccount_card.click(force=True)
             
+            # --- 杀手锏：全屏弹窗清理器 ---
+            await logger.broadcast("🧹 页面跳转中，等待 6 秒渲染后启动弹窗清理器...")
+            await asyncio.sleep(6) 
+            
+            await logger.broadcast("🔫 连按 Escape 键强制击碎 SAP 模态框...")
+            for _ in range(4):
+                await page.keyboard.press("Escape")
+                await asyncio.sleep(0.5)
+                
+            # 补刀：点击隐藏的关闭按钮
+            close_selectors = [
+                "button[aria-label='Close']", "button[title='Close']", 
+                "button[aria-label='关闭']", "button[title='关闭']",
+                ".sapMDialogCloseBtn"
+            ]
+            for sel in close_selectors:
+                try:
+                    btns = page.locator(sel)
+                    for i in range(await btns.count()):
+                        await btns.nth(i).click(force=True)
+                except: pass
+            # -----------------------------
+            
             await logger.broadcast("🔍 正在扫描 Kyma 环境配置区...")
-            await page.wait_for_selector('text="Kyma Environment", text="Kyma 环境"', timeout=45000)
-            await logger.broadcast("✅ 成功突围！已进入 SG-AZ 子账户的 Kyma 管理界面！")
+            kyma_found = False
+            for _ in range(45):
+                if await page.locator("text=/Kyma Environment|Kyma 环境/i").count() > 0:
+                    kyma_found = True
+                    break
+                await asyncio.sleep(1)
+                
+            if not kyma_found:
+                raise Exception("未能在 45 秒内扫描到 Kyma 环境，请查看截图排查！")
+                
+            await logger.broadcast(f"✅ 成功突围！已进入 {SAP_SUBACCOUNT} 子账户的 Kyma 管理界面！")
 
             page_text = await page.content()
             expire_match = re.search(r"(?:expires in|剩余)\s*(\d+)\s*(?:days|天)", page_text, re.IGNORECASE)
