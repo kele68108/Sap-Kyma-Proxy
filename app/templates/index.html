@@ -28,7 +28,7 @@
 </head>
 <body>
     <div class="header">
-        <h2>🚀 Serverless Kyma 控制台</h2>
+        <h2>🚀 Sap Kyma Proxy部署面板</h2>
         <div style="font-size: 14px; color: #94a3b8;">Status: <span style="color: #22c55e;">● 在线</span></div>
     </div>
 
@@ -54,7 +54,7 @@
         </div>
 
         <div class="terminal-panel" id="terminal">
-            <div class="log-line"><span class="log-time">[System]</span>欢迎使用全自动代理部署流水线。等待指令输入...</div>
+            <div class="log-line"><span class="log-time">[System]</span>欢迎使用Sap Kyma Proxy全自动部署。等待部署指令...</div>
             <div id="cursor" class="blinking-cursor"></div>
         </div>
     </div>
@@ -100,7 +100,7 @@
             } catch (err) {
                 appendLog("❌ 触发失败: " + err.message, "#ef4444");
                 deployBtn.disabled = false;
-                deployBtn.innerText = "⚡ 开始自动部署流水线";
+                deployBtn.innerText = "⚡ 开始自动部署";
             }
         }
     </script>
