@@ -15,7 +15,7 @@ async def run_full_flow(logger):
 
     async with async_playwright() as p:
         # ==========================================
-        # 🛡️ 伪装核心 1：注入反检测启动参数
+        # 🛡️ 伪装核心：匹配 v130 内核与深度反检测
         # ==========================================
         browser = await p.chromium.launch(
             headless=True,
@@ -23,24 +23,17 @@ async def run_full_flow(logger):
                 '--no-sandbox',             
                 '--disable-dev-shm-usage',  
                 '--disable-gpu',
-                '--disable-blink-features=AutomationControlled' # 抹除自动化特征
+                '--disable-blink-features=AutomationControlled'
             ]
         )
         
-        # ==========================================
-        # 🛡️ 伪装核心 2：使用严格匹配的 User-Agent
-        # ==========================================
         context = await browser.new_context(
             viewport={'width': 1920, 'height': 1080}, 
             locale='zh-CN',
-            # 升级到 v130，与 Playwright 1.48 的底层 Chromium 版本保持一致
             user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
         )
         context.set_default_timeout(45000)
         
-        # ==========================================
-        # 🛡️ 伪装核心 3：深度抹除自动化特征 (伪装插件、语言、webdriver)
-        # ==========================================
         stealth_js = """
             Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
             window.navigator.chrome = { runtime: {} };
@@ -83,41 +76,51 @@ async def run_full_flow(logger):
             
             target_reached = False
             for _ in range(90): 
-                # 状态 1：拦截墙 (使用原生 JS 强制突破)
+                # 状态 1：拦截墙 (终极穿甲弹)
                 try:
-                    wall_btn = page.locator('text="仍然继续"').first
-                    if not await wall_btn.is_visible():
-                        wall_btn = page.locator('text="Continue anyway"').first
+                    # 关键修复 1：使用 .filter(state="visible") 彻底过滤掉不可见的幽灵元素
+                    wall_btn = page.locator('text="仍然继续", text="Continue anyway", text="仍要继续"').filter(state="visible").first
                         
                     if await wall_btn.is_visible():
-                        await logger.broadcast("⚠️ 发现拦截墙，正在执行原生 JS 强制突围...")
-                        # 杀手锏：绕过前端事件拦截，直接触发 DOM 节点的 click 方法
-                        await wall_btn.evaluate("node => node.click()")
-                        await asyncio.sleep(4) # 给跳转留足缓冲时间
+                        await logger.broadcast("⚠️ 发现可见的拦截墙，启动混合穿甲突围...")
+                        
+                        # 策略 A：使用 Playwright 的底层事件派发 (无视前端框架的 click 拦截)
+                        await wall_btn.dispatch_event('click')
+                        await asyncio.sleep(0.5)
+                        
+                        # 策略 B：原生 JS 强制点击自身及其父容器 (防止真正绑事件的是外层 div)
+                        await wall_btn.evaluate("""node => {
+                            if(node.click) node.click();
+                            if(node.parentElement && node.parentElement.click) node.parentElement.click();
+                        }""")
+                        
+                        # 关键修复 2：SAP 服务器跳转可能存在延迟，给足 6 秒缓冲，防止状态机死循环重发指令
+                        await logger.broadcast("⏳ 强制放行指令已下发，等待 SAP 路由跳转...")
+                        await asyncio.sleep(6) 
                 except Exception as e: 
                     pass
 
                 # 状态 2：欢迎页按钮
                 try:
-                    home_btn = page.locator('text="转到您的试用账户", text="Go To Your Trial Account", text="Enter Your Trial Account"').first
+                    home_btn = page.locator('text="转到您的试用账户", text="Go To Your Trial Account", text="Enter Your Trial Account"').filter(state="visible").first
                     if await home_btn.is_visible():
                         await logger.broadcast("👉 发现欢迎页，正在点击『转到您的试用账户』...")
                         await home_btn.click(force=True)
-                        await asyncio.sleep(3)
+                        await asyncio.sleep(4)
                 except: pass
 
                 # 状态 3：弹窗协议
                 try:
-                    ok_btn = page.locator("button:has-text('OK'), ui5-button:has-text('OK'), button:has-text('Accept All')").first
+                    ok_btn = page.locator("button:has-text('OK'), ui5-button:has-text('OK'), button:has-text('Accept All')").filter(state="visible").first
                     if await ok_btn.is_visible():
                         checkbox = page.locator("input[type='checkbox']").first
                         if await checkbox.is_visible(): 
                             await checkbox.check()
                         await ok_btn.click(force=True)
-                        await asyncio.sleep(2) 
+                        await asyncio.sleep(3) 
                 except: pass
 
-                # 状态 4：成功判定 (看到子账户或者直接看到 Kyma，就说明导航结束！)
+                # 状态 4：成功判定
                 try:
                     if await page.locator('text="SG-AZ", text="Kyma Environment", text="Kyma 环境"').first.is_visible():
                         await logger.broadcast("✅ 导航成功，已到达目标账户层级！")
@@ -134,7 +137,6 @@ async def run_full_flow(logger):
             # 第三阶段：进入 Kyma 并判断状态
             # ==========================================
             await logger.broadcast("🖱️ 正在寻找并进入子账户 (SG-AZ)...")
-            # 有可能之前跑过脚本，SAP 记住了路径，直接在 Kyma 页面了
             if not await page.locator('text="Kyma Environment", text="Kyma 环境"').first.is_visible():
                 subaccount_card = page.locator('text="SG-AZ"').first
                 if not await subaccount_card.is_visible():
