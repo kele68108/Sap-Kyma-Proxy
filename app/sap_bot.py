@@ -28,19 +28,26 @@ async def run_full_flow(logger):
         )
         
         # ==========================================
-        # 🛡️ 伪装核心 2：使用真实的 User-Agent 和环境
+        # 🛡️ 伪装核心 2：使用严格匹配的 User-Agent
         # ==========================================
         context = await browser.new_context(
             viewport={'width': 1920, 'height': 1080}, 
             locale='zh-CN',
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            # 升级到 v130，与 Playwright 1.48 的底层 Chromium 版本保持一致
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
         )
         context.set_default_timeout(45000)
         
         # ==========================================
-        # 🛡️ 伪装核心 3：底层干掉 webdriver 标记
+        # 🛡️ 伪装核心 3：深度抹除自动化特征 (伪装插件、语言、webdriver)
         # ==========================================
-        await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        stealth_js = """
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            window.navigator.chrome = { runtime: {} };
+            Object.defineProperty(navigator, 'languages', {get: () => ['zh-CN', 'zh', 'en']});
+            Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3]});
+        """
+        await context.add_init_script(stealth_js)
         
         page = await context.new_page()
         
@@ -76,14 +83,19 @@ async def run_full_flow(logger):
             
             target_reached = False
             for _ in range(90): 
-                # 状态 1：拦截墙 (强化匹配逻辑)
+                # 状态 1：拦截墙 (使用原生 JS 强制突破)
                 try:
-                    wall_btn = page.locator('button:has-text("仍然继续"), a:has-text("仍然继续"), text="Continue anyway", text="仍要继续"').first
+                    wall_btn = page.locator('text="仍然继续"').first
+                    if not await wall_btn.is_visible():
+                        wall_btn = page.locator('text="Continue anyway"').first
+                        
                     if await wall_btn.is_visible():
-                        await logger.broadcast("⚠️ 发现拦截墙，尝试击碎...")
-                        await wall_btn.click(force=True)
-                        await asyncio.sleep(3) # 给跳转留缓冲
-                except: pass
+                        await logger.broadcast("⚠️ 发现拦截墙，正在执行原生 JS 强制突围...")
+                        # 杀手锏：绕过前端事件拦截，直接触发 DOM 节点的 click 方法
+                        await wall_btn.evaluate("node => node.click()")
+                        await asyncio.sleep(4) # 给跳转留足缓冲时间
+                except Exception as e: 
+                    pass
 
                 # 状态 2：欢迎页按钮
                 try:
