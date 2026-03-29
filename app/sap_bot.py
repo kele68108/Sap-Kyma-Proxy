@@ -10,7 +10,6 @@ import app.k8s_deployer as deployer
 # ==========================================
 SAP_USER = os.getenv("SAP_USER")
 SAP_PASS = os.getenv("SAP_PASS")
-# 新增：子账户名称变量，默认 fallback 到 "SG-AZ"
 SAP_SUBACCOUNT = os.getenv("SAP_SUBACCOUNT", "SG-AZ") 
 
 async def run_full_flow(logger):
@@ -214,8 +213,31 @@ async def run_full_flow(logger):
                         await asyncio.sleep(10)
                         wait_del += 1
                 
-                await logger.broadcast("✨ 旧实例已销毁，正在拉起全新 Kyma 集群...")
+                # ========================================================
+                # 修复点：拉起实例并确认弹窗
+                # ========================================================
+                await logger.broadcast("✨ 旧实例已销毁/不存在，正在拉起全新 Kyma 集群...")
                 await page.locator('button:has-text("Enable Kyma"), button:has-text("启用 Kyma")').first.click(force=True)
+                
+                await logger.broadcast("⏳ 等待配置弹窗渲染...")
+                await asyncio.sleep(4) # 给弹窗动画预留时间
+                
+                try:
+                    # 获取屏幕上最后的“创建/Create”按钮（通常弹窗层级最高，排在最后）
+                    create_btn = page.locator('button:has-text("Create"), button:has-text("创建")').last
+                    if await create_btn.count() > 0:
+                        await create_btn.click(force=True)
+                        await logger.broadcast("✅ 已在弹窗中成功点击『创建』！")
+                    else:
+                        # 兜底：原生JS强制执行点击
+                        await page.evaluate("""() => {
+                            const btns = Array.from(document.querySelectorAll('button, bdi, span'));
+                            const createBtn = btns.find(b => b.textContent.trim() === '创建' || b.textContent.trim() === 'Create');
+                            if(createBtn) createBtn.click();
+                        }""")
+                        await logger.broadcast("✅ [兜底逻辑] 已在弹窗中强行执行创建指令！")
+                except Exception as e:
+                    await logger.broadcast(f"⚠️ 弹窗确认环节出现小插曲: {str(e)}")
                 
                 wait_minutes = 0
                 await logger.broadcast("⏳ 进入深度轮询模式，等待底层资源分配 (通常需要 10-15 分钟)...")
