@@ -1,5 +1,5 @@
 # 使用官方带有各种浏览器依赖的 Python 镜像作为底座
-FROM mcr.microsoft.com/playwright/python:v1.42.0-jammy
+FROM mcr.microsoft.com/playwright/python:v1.48.0-jammy
 
 # 设置工作目录
 WORKDIR /app
