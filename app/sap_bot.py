@@ -15,23 +15,29 @@ async def run_full_flow(logger):
         return
 
     async with async_playwright() as p:
-        # 启动 Chromium 无头浏览器，加入更多抗反爬和稳定性参数
+        # 🌟 优化点 1：增加反检测启动参数，抹除自动化痕迹
         browser = await p.chromium.launch(
             headless=True, 
             args=[
                 '--no-sandbox', 
                 '--disable-dev-shm-usage',
                 '--disable-gpu',
-                '--disable-software-rasterizer'
+                '--disable-software-rasterizer',
+                '--disable-blink-features=AutomationControlled' # 隐藏 WebDriver 标记
             ]
         )
+        
+        # 🌟 优化点 2：深度伪装 User-Agent，假装自己是 Windows 11 下的正常 Chrome 浏览器
         context = await browser.new_context(
             viewport={'width': 1280, 'height': 800},
-            locale='en-US' # 强制英文环境，防止按钮文本多语言变化
+            locale='en-US',
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
         )
-        # 全局默认超时时间提升至 60 秒，适配缓慢的 PaaS 网络
         context.set_default_timeout(60000)
         page = await context.new_page()
+        
+        # 🌟 优化点 3：在页面加载前注入 JS，彻底抹除机器人的底层指纹
+        await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         
         try:
             # ==========================================
@@ -40,6 +46,20 @@ async def run_full_flow(logger):
             await logger.broadcast("🌐 正在访问 SAP BTP Trial 登录页...")
             await page.goto("https://cockpit.hanatrial.ondemand.com/trial/#/home/trial", wait_until="domcontentloaded", timeout=90000)
             
+            # 🌟 核心突破：处理“浏览器不受支持”的智障拦截页
+            try:
+                # 兼容中文的“仍然继续”和英文的“Continue anyway”
+                unsupported_btn = page.locator('text="仍然继续"').first
+                if not await unsupported_btn.is_visible():
+                    unsupported_btn = page.locator('text="Continue anyway"').first
+
+                if await unsupported_btn.is_visible(timeout=5000):
+                    await logger.broadcast("⚠️ 检测到 SAP 的『浏览器不受支持』安全墙，正在强行突破...")
+                    await unsupported_btn.click()
+                    await page.wait_for_timeout(3000) # 给页面跳转留出缓冲时间
+            except:
+                pass
+
             # 静默处理可能出现的 Cookie 弹窗
             try:
                 cookie_btn = page.locator('button:has-text("Accept All"), button:has-text("同意")').first
@@ -48,8 +68,7 @@ async def run_full_flow(logger):
             except:
                 pass
 
-            await logger.broadcast(f"🔑 正在输入账号: {SAP_USER}")
-            # 广谱定位器，应对 SAP 登录页面的动态变动
+            await logger.broadcast(f"🔑 正在寻找登录框并输入账号: {SAP_USER}")
             await page.locator('input[name="j_username"], input[type="email"], input[type="text"]').first.fill(SAP_USER)
             await page.locator('button[type="submit"], button:has-text("Continue"), button[id="logOnFormSubmit"]').first.click()
             
@@ -60,7 +79,6 @@ async def run_full_flow(logger):
             await page.locator('button[type="submit"], button:has-text("Log On")').first.click()
             
             await logger.broadcast("⏳ 正在等待 SAP 控制台加载 (PaaS 环境初次渲染极慢，请耐心等待 1-2 分钟)...")
-            # 不再依赖特定文本，依赖 SAP UI5 核心元素的出现
             await page.wait_for_selector('a:has-text("trial"), div.sapUiBody', timeout=90000)
             await logger.broadcast("✅ 成功进入 SAP BTP 控制台主体！")
 
@@ -68,7 +86,6 @@ async def run_full_flow(logger):
             # 第二阶段：进入 Subaccount 并判断 Kyma 状态
             # ==========================================
             await logger.broadcast("🔍 正在直接跳转至 Subaccount 页面寻找 Kyma 实例...")
-            # 暴力 URL 跳转到目标层级
             await page.goto("https://cockpit.hanatrial.ondemand.com/trial/#/globalaccount/trial/subaccount/trial", wait_until="domcontentloaded")
             await page.wait_for_selector('text="Kyma Environment", text="kyma"', timeout=60000)
 
@@ -112,7 +129,7 @@ async def run_full_flow(logger):
                 await logger.broadcast("✨ 旧实例已销毁，正在拉起全新 Kyma 集群...")
                 await page.locator('button:has-text("Enable Kyma")').click()
                 
-                # 轮询等待创建完成 (长耗时任务)
+                # 轮询等待创建完成
                 wait_minutes = 0
                 await logger.broadcast("⏳ 进入深度轮询模式，等待底层资源分配 (通常需要 10-15 分钟)...")
                 while True:
@@ -153,7 +170,7 @@ async def run_full_flow(logger):
             await logger.broadcast(f"🏷️ 页面标题: {page_title}")
             await logger.broadcast("==================================================")
             
-            # 1. 截取当前出错页面的图片
+            # 截取当前出错页面的图片
             screenshot_path = "crash_screenshot.png"
             try:
                 await page.screenshot(path=screenshot_path)
@@ -161,18 +178,16 @@ async def run_full_flow(logger):
             except Exception as screenshot_error:
                 await logger.broadcast("⚠️ 截图失败，可能页面已销毁。")
 
-            # 2. 推送至 Telegram
+            # 推送至 Telegram
             tg_token = os.getenv("TG_BOT_TOKEN")
             tg_chat_id = os.getenv("TG_CHAT_ID")
             
             if tg_token and tg_chat_id and os.path.exists(screenshot_path):
                 await logger.broadcast("✈️ 正在将现场截图与诊断报告发送至 Telegram...")
                 try:
-                    # 组装带格式的 Telegram 图片描述 (Caption)
                     caption = f"🚨 **SAP 自动化坠机警报**\n\n📍 **网址:** {current_url}\n🏷️ **标题:** {page_title}\n❌ **报错信息:**\n`{error_msg[:300]}...`"
-                    caption_escaped = shlex.quote(caption) # 防止特殊字符破坏 shell 语法
+                    caption_escaped = shlex.quote(caption) 
                     
-                    # 构造 curl 发送 multipart/form-data 的文件请求
                     cmd = f'curl -s -X POST "https://api.telegram.org/bot{tg_token}/sendPhoto" -F chat_id="{tg_chat_id}" -F photo="@{screenshot_path}" -F parse_mode="Markdown" -F caption={caption_escaped}'
                     
                     process = await asyncio.create_subprocess_shell(
