@@ -14,27 +14,25 @@ async def run_full_flow(logger):
         return
 
     async with async_playwright() as p:
-        # ==========================================
-        # 🛡️ 启动环境配置
-        # ==========================================
         browser = await p.chromium.launch(
             headless=True,
             args=[
                 '--no-sandbox',             
                 '--disable-dev-shm-usage',  
                 '--disable-gpu',
-                '--disable-blink-features=AutomationControlled'
+                '--disable-blink-features=AutomationControlled',
+                '--disable-web-security' # 额外防护：禁用 Web 安全策略，防止跨域 iframe 阻断
             ]
         )
         
         context = await browser.new_context(
             viewport={'width': 1920, 'height': 1080}, 
             locale='zh-CN',
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+            ignore_https_errors=True
         )
         context.set_default_timeout(45000)
         
-        # 抹除自动化特征
         stealth_js = """
             Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
             window.navigator.chrome = { runtime: {} };
@@ -54,71 +52,79 @@ async def run_full_flow(logger):
             await page.wait_for_selector("input[name='j_username'], input[type='email']", timeout=30000)
             
             await logger.broadcast(f"🔑 正在填写账号: {SAP_USER}")
-            if await page.locator("input[name='j_username']").is_visible():
+            if await page.locator("input[name='j_username']").count() > 0:
                 await page.locator("input[name='j_username']").fill(SAP_USER)
             else:
                 await page.locator("input[type='email']").fill(SAP_USER)
                 
             submit_btn = page.locator("button#logOnFormSubmit, button[type='submit']")
-            if await submit_btn.is_visible():
-                await submit_btn.click()
+            if await submit_btn.count() > 0:
+                await submit_btn.click(force=True)
                 await asyncio.sleep(2)
                  
             await logger.broadcast("🔑 正在填写密码并验证...")
             await page.locator("input[name='j_password'], input[type='password']").fill(SAP_PASS)
-            await page.locator("button#logOnFormSubmit, button[type='submit']").click()
+            await page.locator("button#logOnFormSubmit, button[type='submit']").click(force=True)
             
             # ==========================================
-            # 🌟 第二阶段：全域 iframe 穿透状态机 (汲取 BAS 脚本灵感)
+            # 🌟 第二阶段：全域暴力状态机 (无视 CSS 遮罩)
             # ==========================================
-            await logger.broadcast("📡 开启全域状态机，执行 iframe 穿透扫描 (最高 90 秒)...")
+            await logger.broadcast("📡 开启全域暴力状态机，无视前端遮罩执行扫描 (最高 90 秒)...")
             
             target_reached = False
             for _ in range(90): 
-                # 获取当前所有框架 (主页面 + 嵌套 iframe)
                 frames_to_check = [page] + page.frames
                 
                 for frame in frames_to_check:
-                    # 状态 1：拦截墙 (穿透扫描)
+                    # 状态 1：拦截墙 (使用正则 + count 暴力探查)
                     try:
-                        wall_btn = frame.locator('text="仍然继续", text="Continue anyway", text="仍要继续"').filter(state="visible").first
-                        if await wall_btn.is_visible(timeout=500):
-                            await logger.broadcast(f"⚠️ 发现拦截墙 (位于框架: {frame.name or '主页面'})，执行强制突破...")
+                        # 放弃 is_visible，直接正则匹配 HTML 源码，只要存在就强杀
+                        wall_btn = frame.locator("text=/仍然继续|Continue anyway|仍要继续/i").first
+                        if await wall_btn.count() > 0:
+                            await logger.broadcast(f"⚠️ 发现拦截墙代码，正在执行原生穿甲点击...")
                             
-                            # 结合原生 JS 与 Playwright click 的双重保险
+                            # 终极点击：不管是谁绑定的事件，当前节点和父节点各点一次
                             await wall_btn.evaluate("""node => {
                                 if(node.click) node.click();
                                 if(node.parentElement && node.parentElement.click) node.parentElement.click();
+                                if(node.parentNode && node.parentNode.click) node.parentNode.click();
                             }""")
-                            await wall_btn.click(force=True)
                             
-                            await logger.broadcast("⏳ 突破指令已下发，等待路由刷新...")
-                            await asyncio.sleep(5) 
+                            # Playwright 强制再补一枪
+                            try:
+                                await wall_btn.click(force=True, timeout=1000)
+                            except: pass
+                            
+                            await asyncio.sleep(4) 
                     except: pass
 
                     # 状态 2：欢迎页按钮
                     try:
-                        home_btn = frame.locator('text="转到您的试用账户", text="Go To Your Trial Account", text="Enter Your Trial Account"').filter(state="visible").first
-                        if await home_btn.is_visible(timeout=500):
+                        home_btn = frame.locator("text=/转到您的试用账户|Go To Your Trial Account|Enter Your Trial Account/i").first
+                        if await home_btn.count() > 0:
                             await logger.broadcast("👉 发现欢迎页，正在点击『转到您的试用账户』...")
-                            await home_btn.click(force=True)
+                            try:
+                                await home_btn.evaluate("node => node.click()")
+                            except: pass
+                            await home_btn.click(force=True, timeout=1000)
                             await asyncio.sleep(3)
                     except: pass
 
                     # 状态 3：弹窗协议
                     try:
-                        ok_btn = frame.locator("button:has-text('OK'), ui5-button:has-text('OK'), button:has-text('Accept All')").filter(state="visible").first
-                        if await ok_btn.is_visible(timeout=500):
+                        ok_btn = frame.locator("text=/OK|Accept All/i").locator("visible=true").first
+                        if await ok_btn.count() > 0:
                             checkbox = frame.locator("input[type='checkbox']").first
-                            if await checkbox.is_visible(): 
-                                await checkbox.check()
+                            if await checkbox.count() > 0: 
+                                await checkbox.check(force=True)
                             await ok_btn.click(force=True)
                             await asyncio.sleep(2) 
                     except: pass
 
-                # 状态 4：成功判定 (全局扫描)
+                # 状态 4：成功判定 (看到 SG-AZ 或 Kyma 就算成功)
                 try:
-                    if await page.locator('text="SG-AZ", text="Kyma Environment", text="Kyma 环境"').first.is_visible():
+                    target_locator = page.locator("text=/SG-AZ|Kyma Environment|Kyma 环境/i").first
+                    if await target_locator.count() > 0:
                         await logger.broadcast("✅ 导航成功，已到达目标账户层级！")
                         target_reached = True
                         break
@@ -133,10 +139,11 @@ async def run_full_flow(logger):
             # 第三阶段：进入 Kyma 并判断状态
             # ==========================================
             await logger.broadcast("🖱️ 正在寻找并进入子账户 (SG-AZ)...")
-            if not await page.locator('text="Kyma Environment", text="Kyma 环境"').first.is_visible():
-                subaccount_card = page.locator('text="SG-AZ"').first
-                if not await subaccount_card.is_visible():
-                    subaccount_card = page.locator('text="trial"').nth(1)
+            kyma_target = page.locator("text=/Kyma Environment|Kyma 环境/i").first
+            if await kyma_target.count() == 0:
+                subaccount_card = page.locator("text=/SG-AZ/i").first
+                if await subaccount_card.count() == 0:
+                    subaccount_card = page.locator("text=/trial/i").nth(1)
                 await subaccount_card.click(force=True)
             
             await logger.broadcast("🔍 正在扫描 Kyma 环境配置区...")
@@ -163,17 +170,17 @@ async def run_full_flow(logger):
                 await logger.broadcast("💣 触发重置协议，准备销毁并重建 Kyma 实例...")
                 
                 delete_btn = page.locator('button[aria-label="Delete Kyma Environment"], button[title="删除 Kyma 环境"], button:has-text("Delete"), button:has-text("删除")').first
-                if await delete_btn.is_visible():
-                    await delete_btn.click()
+                if await delete_btn.count() > 0:
+                    await delete_btn.click(force=True)
                     await asyncio.sleep(1)
                     confirm_btn = page.locator('button:has-text("Delete"), button:has-text("删除")').last
-                    if await confirm_btn.is_visible():
-                        await confirm_btn.click()
+                    if await confirm_btn.count() > 0:
+                        await confirm_btn.click(force=True)
                     await logger.broadcast("🗑️ 已下发删除指令，正在等待集群彻底销毁 (预计 1-3 分钟)...")
                     
                     wait_del = 0
                     while True:
-                        if await page.locator('button:has-text("Enable Kyma"), button:has-text("启用 Kyma")').is_visible():
+                        if await page.locator('button:has-text("Enable Kyma"), button:has-text("启用 Kyma")').count() > 0:
                             break
                         if wait_del > 18:
                             raise Exception("等待删除 Kyma 超时 (超过3分钟)，强制坠机！")
@@ -181,7 +188,7 @@ async def run_full_flow(logger):
                         wait_del += 1
                 
                 await logger.broadcast("✨ 旧实例已销毁，正在拉起全新 Kyma 集群...")
-                await page.locator('button:has-text("Enable Kyma"), button:has-text("启用 Kyma")').first.click()
+                await page.locator('button:has-text("Enable Kyma"), button:has-text("启用 Kyma")').first.click(force=True)
                 
                 wait_minutes = 0
                 await logger.broadcast("⏳ 进入深度轮询模式，等待底层资源分配 (通常需要 10-15 分钟)...")
@@ -204,7 +211,7 @@ async def run_full_flow(logger):
             # ==========================================
             await logger.broadcast("📥 正在向 SAP 申请 Kubernetes 集群管理凭证...")
             async with page.expect_download() as download_info:
-                await page.locator('a:has-text("Kubeconfig")').first.click()
+                await page.locator('a:has-text("Kubeconfig")').first.click(force=True)
             
             download = await download_info.value
             await download.save_as("kubeconfig.yaml")
