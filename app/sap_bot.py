@@ -47,13 +47,19 @@ async def run_full_flow(logger):
         
         try:
             # ==========================================
-            # 第一阶段：登录 SAP
+            # 第一阶段：登录 SAP (修复 SSO 重定向挂起问题)
             # ==========================================
             await logger.broadcast("🌐 正在访问 SAP BTP 主页...")
-            await page.goto("https://cockpit.hanatrial.ondemand.com/trial/#/home/trial", wait_until="domcontentloaded")
+            
+            try:
+                # 关键修复：降低等待级别为 commit，并且即使抛出超时错误也拦截掉
+                await page.goto("https://cockpit.hanatrial.ondemand.com/trial/#/home/trial", wait_until="commit", timeout=45000)
+            except Exception:
+                await logger.broadcast("⚠️ 页面路由可能因 SSO 延迟挂起，强制接管并探测登录入口...")
             
             await logger.broadcast("⏳ 等待 SAP 登录网关...")
-            await page.wait_for_selector("input[name='j_username'], input[type='email']", timeout=30000)
+            # 把找输入框的超时时间拉长，给 SSO 充足的渲染时间
+            await page.wait_for_selector("input[name='j_username'], input[type='email']", timeout=60000)
             
             await logger.broadcast(f"🔑 正在填写账号: {SAP_USER}")
             if await page.locator("input[name='j_username']").count() > 0:
@@ -115,7 +121,6 @@ async def run_full_flow(logger):
                     except: pass
 
                 try:
-                    # 动态注入子账户变量进行匹配
                     target_locator = page.locator(f"text=/{SAP_SUBACCOUNT}|Kyma Environment|Kyma 环境/i").first
                     if await target_locator.count() > 0:
                         await logger.broadcast("✅ 导航成功，已到达目标账户层级！")
@@ -250,16 +255,14 @@ async def run_full_flow(logger):
             # 🌟 第五阶段：提取灵魂 (API 级底层窃取)
             # ==========================================
             await logger.broadcast("📥 正在向 SAP 申请 Kubernetes 集群管理凭证...")
-            await asyncio.sleep(5) # 给凭证生成留点时间
+            await asyncio.sleep(5) 
             
-            # 定位含有 'kubeconfig' 的超链接，提取真实 URL
             kube_locator = page.locator("a[href*='kubeconfig']").first
             
             if await kube_locator.count() > 0:
                 kube_url = await kube_locator.get_attribute("href")
                 await logger.broadcast(f"🔗 成功截获凭证底层直链 API，准备强行拉取...")
                 
-                # 直接调用 API 抓取文件内容，完美规避前端下载拦截
                 req_response = await context.request.get(kube_url)
                 if req_response.ok:
                     yaml_content = await req_response.text()
@@ -269,7 +272,6 @@ async def run_full_flow(logger):
                 else:
                     raise Exception(f"底层 API 拉取失败，HTTP 状态码: {req_response.status}")
             else:
-                # 如果页面改版了连 href 都找不到，启用老方案点击兜底
                 await logger.broadcast("⚠️ 未找到明文 API 直链，回退至模拟浏览器下载模式...")
                 async with page.expect_download() as download_info:
                     await page.locator("text=/Kubeconfig/i").first.click(force=True)
