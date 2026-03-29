@@ -5,7 +5,6 @@ import shlex
 from playwright.async_api import async_playwright
 import app.k8s_deployer as deployer
 
-# 从环境变量获取账号密码
 SAP_USER = os.getenv("SAP_USER")
 SAP_PASS = os.getenv("SAP_PASS")
 
@@ -15,21 +14,33 @@ async def run_full_flow(logger):
         return
 
     async with async_playwright() as p:
-        # 🌟 核心修正：大道至简！移除所有画蛇添足的伪装参数，直接使用最纯净的 headless
+        # 纯净启动，搭配升级后的 v1.48 镜像内核
         browser = await p.chromium.launch(headless=True)
-        # 使用和 BAS 脚本一样的 1080P 大屏分辨率，防止元素挤压变形
         context = await browser.new_context(viewport={'width': 1920, 'height': 1080})
         context.set_default_timeout(60000)
         page = await context.new_page()
         
         try:
             # ==========================================
-            # 第一阶段：登录 SAP (复用 BAS 脚本神级逻辑)
+            # 第一阶段：登录 SAP
             # ==========================================
             await logger.broadcast("🌐 正在直接访问 SAP BTP Trial Subaccount...")
-            # 直接跳转目标地址，减少跳转链路
             await page.goto("https://cockpit.hanatrial.ondemand.com/trial/#/globalaccount/trial/subaccount/trial", wait_until="domcontentloaded", timeout=90000)
             
+            # 🌟 核心突破：霸王硬上弓！专门对付“浏览器不受支持”页面
+            try:
+                await logger.broadcast("🛡️ 正在进行前置路障排查...")
+                # 兼容中文的“仍然继续”、“仍要继续”或英文的“Continue anyway”
+                bypass_btn = page.locator('text="仍然继续", text="Continue anyway", text="仍要继续", button:has-text("继续")').first
+                if await bypass_btn.is_visible(timeout=8000):
+                    await logger.broadcast("⚠️ 遭遇 SAP 的『浏览器不受支持』拦截墙！正在一拳踹开...")
+                    await bypass_btn.click(force=True)
+                    await asyncio.sleep(4) # 给页面跳转到真实登录框留出时间
+                else:
+                    await logger.broadcast("✅ 前方道路畅通，未见拦截墙。")
+            except Exception:
+                pass
+
             await logger.broadcast("⏳ 等待 SAP 登录网关响应...")
             await page.wait_for_selector("input[name='j_username'], input[type='email']", timeout=30000)
             
@@ -50,7 +61,7 @@ async def run_full_flow(logger):
             
             await logger.broadcast("⏳ 正在等待进入 Subaccount 控制台 (初次渲染较慢)...")
             
-            # 🌟 复用 BAS 的协议弹窗清理逻辑
+            # 弹窗清理逻辑
             try:
                 await page.wait_for_load_state("networkidle")
                 ok_btn = page.locator("button:has-text('OK'), ui5-button:has-text('OK'), button:has-text('Accept All')").first
@@ -70,7 +81,6 @@ async def run_full_flow(logger):
             # ==========================================
             # 第二阶段：判断 Kyma 状态
             # ==========================================
-            # 抓取页面上的剩余天数文本
             page_text = await page.content()
             expire_match = re.search(r"expires in (\d+) days", page_text)
             
@@ -94,23 +104,19 @@ async def run_full_flow(logger):
                 if await delete_btn.is_visible():
                     await delete_btn.click()
                     await asyncio.sleep(1)
-                    # 二次确认弹窗
                     confirm_btn = page.locator('button:has-text("Delete")').filter(has_text="Delete")
                     if await confirm_btn.is_visible():
                         await confirm_btn.click()
                     await logger.broadcast("🗑️ 已下发删除指令，正在等待集群彻底销毁 (预计 1-3 分钟)...")
                     
-                    # 轮询等待删除完成 (Enable 按钮出现)
                     while True:
                         if await page.locator('button:has-text("Enable Kyma")').is_visible():
                             break
                         await asyncio.sleep(10)
                 
-                # 点击启用按钮
                 await logger.broadcast("✨ 旧实例已销毁，正在拉起全新 Kyma 集群...")
                 await page.locator('button:has-text("Enable Kyma")').click()
                 
-                # 轮询等待创建完成
                 wait_minutes = 0
                 await logger.broadcast("⏳ 进入深度轮询模式，等待底层资源分配 (通常需要 10-15 分钟)...")
                 while True:
@@ -134,12 +140,11 @@ async def run_full_flow(logger):
             await download.save_as("kubeconfig.yaml")
             await logger.broadcast("✅ 凭证获取成功！自动化浏览器任务结束，即将移交部署引擎。")
 
-            # 移交给 K8s 部署器
             await deployer.run_deploy(logger)
 
         except Exception as e:
             # ==========================================
-            # 🚑 异常捕获：保留神级除错系统 (截图 + TG)
+            # 🚑 异常捕获：神级除错系统 (截图 + TG)
             # ==========================================
             current_url = page.url
             page_title = await page.title()
