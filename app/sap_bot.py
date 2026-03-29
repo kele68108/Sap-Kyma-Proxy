@@ -14,16 +14,34 @@ async def run_full_flow(logger):
         return
 
     async with async_playwright() as p:
+        # ==========================================
+        # 🛡️ 伪装核心 1：注入反检测启动参数
+        # ==========================================
         browser = await p.chromium.launch(
             headless=True,
             args=[
                 '--no-sandbox',             
                 '--disable-dev-shm-usage',  
-                '--disable-gpu'
+                '--disable-gpu',
+                '--disable-blink-features=AutomationControlled' # 抹除自动化特征
             ]
         )
-        context = await browser.new_context(viewport={'width': 1920, 'height': 1080}, locale='en-US')
+        
+        # ==========================================
+        # 🛡️ 伪装核心 2：使用真实的 User-Agent 和环境
+        # ==========================================
+        context = await browser.new_context(
+            viewport={'width': 1920, 'height': 1080}, 
+            locale='zh-CN',
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        )
         context.set_default_timeout(45000)
+        
+        # ==========================================
+        # 🛡️ 伪装核心 3：底层干掉 webdriver 标记
+        # ==========================================
+        await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        
         page = await context.new_page()
         
         try:
@@ -58,16 +76,16 @@ async def run_full_flow(logger):
             
             target_reached = False
             for _ in range(90): 
-                # 状态 1：拦截墙
+                # 状态 1：拦截墙 (强化匹配逻辑)
                 try:
-                    wall_btn = page.locator('text="仍然继续", text="Continue anyway", text="仍要继续"').first
+                    wall_btn = page.locator('button:has-text("仍然继续"), a:has-text("仍然继续"), text="Continue anyway", text="仍要继续"').first
                     if await wall_btn.is_visible():
-                        await logger.broadcast("⚠️ 击碎『浏览器不受支持』拦截墙...")
+                        await logger.broadcast("⚠️ 发现拦截墙，尝试击碎...")
                         await wall_btn.click(force=True)
                         await asyncio.sleep(3) # 给跳转留缓冲
                 except: pass
 
-                # 状态 2：欢迎页按钮 (你截图里指出的关键缺失)
+                # 状态 2：欢迎页按钮
                 try:
                     home_btn = page.locator('text="转到您的试用账户", text="Go To Your Trial Account", text="Enter Your Trial Account"').first
                     if await home_btn.is_visible():
