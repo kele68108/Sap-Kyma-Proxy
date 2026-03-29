@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>系统验证 - Kyma Proxy</title>
+    <style>
+        body { background-color: #0b1220; color: #e5eefc; font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .login-box { background: rgba(15, 23, 42, 0.88); padding: 40px; border-radius: 20px; border: 1px solid rgba(148, 163, 184, 0.18); text-align: center; width: 320px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        input { width: 100%; padding: 12px; margin: 15px 0; border-radius: 8px; border: 1px solid #334155; background: #1e293b; color: white; box-sizing: border-box; text-align: center; font-size: 16px; outline: none; }
+        input:focus { border-color: #3b82f6; }
+        button { width: 100%; padding: 12px; border: none; border-radius: 8px; background: #3b82f6; color: white; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 16px; }
+        button:hover { background: #2563eb; }
+        .error { color: #ef4444; font-size: 14px; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <div class="login-box">
+        <h3>🚀 Kyma 控制中心</h3>
+        {% if error %}<div class="error">{{ error }}</div>{% endif %}
+        <form method="POST" action="/login">
+            <input type="password" name="password" placeholder="请输入访问密钥" required autofocus>
+            <button type="submit">进 入 系 统</button>
+        </form>
+    </div>
+</body>
+</html>
