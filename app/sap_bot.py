@@ -15,80 +15,61 @@ async def run_full_flow(logger):
         return
 
     async with async_playwright() as p:
-        # 🌟 优化点 1：增加反检测启动参数，抹除自动化痕迹
-        browser = await p.chromium.launch(
-            headless=True, 
-            args=[
-                '--no-sandbox', 
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-                '--disable-software-rasterizer',
-                '--disable-blink-features=AutomationControlled' # 隐藏 WebDriver 标记
-            ]
-        )
-        
-        # 🌟 优化点 2：深度伪装 User-Agent，假装自己是 Windows 11 下的正常 Chrome 浏览器
-        context = await browser.new_context(
-            viewport={'width': 1280, 'height': 800},
-            locale='en-US',
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-        )
+        # 🌟 核心修正：大道至简！移除所有画蛇添足的伪装参数，直接使用最纯净的 headless
+        browser = await p.chromium.launch(headless=True)
+        # 使用和 BAS 脚本一样的 1080P 大屏分辨率，防止元素挤压变形
+        context = await browser.new_context(viewport={'width': 1920, 'height': 1080})
         context.set_default_timeout(60000)
         page = await context.new_page()
         
-        # 🌟 优化点 3：在页面加载前注入 JS，彻底抹除机器人的底层指纹
-        await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        
         try:
             # ==========================================
-            # 第一阶段：登录 SAP BTP Trial
+            # 第一阶段：登录 SAP (复用 BAS 脚本神级逻辑)
             # ==========================================
-            await logger.broadcast("🌐 正在访问 SAP BTP Trial 登录页...")
-            await page.goto("https://cockpit.hanatrial.ondemand.com/trial/#/home/trial", wait_until="domcontentloaded", timeout=90000)
+            await logger.broadcast("🌐 正在直接访问 SAP BTP Trial Subaccount...")
+            # 直接跳转目标地址，减少跳转链路
+            await page.goto("https://cockpit.hanatrial.ondemand.com/trial/#/globalaccount/trial/subaccount/trial", wait_until="domcontentloaded", timeout=90000)
             
-            # 🌟 核心突破：处理“浏览器不受支持”的智障拦截页
+            await logger.broadcast("⏳ 等待 SAP 登录网关响应...")
+            await page.wait_for_selector("input[name='j_username'], input[type='email']", timeout=30000)
+            
+            await logger.broadcast(f"🔑 正在填写账号: {SAP_USER}")
+            if await page.locator("input[name='j_username']").is_visible():
+                await page.locator("input[name='j_username']").fill(SAP_USER)
+            else:
+                await page.locator("input[type='email']").fill(SAP_USER)
+                
+            submit_btn = page.locator("button#logOnFormSubmit, button[type='submit']")
+            if await submit_btn.is_visible():
+                await submit_btn.click()
+                await asyncio.sleep(2)
+                 
+            await logger.broadcast("🔑 正在填写密码并验证...")
+            await page.locator("input[name='j_password'], input[type='password']").fill(SAP_PASS)
+            await page.locator("button#logOnFormSubmit, button[type='submit']").click()
+            
+            await logger.broadcast("⏳ 正在等待进入 Subaccount 控制台 (初次渲染较慢)...")
+            
+            # 🌟 复用 BAS 的协议弹窗清理逻辑
             try:
-                # 兼容中文的“仍然继续”和英文的“Continue anyway”
-                unsupported_btn = page.locator('text="仍然继续"').first
-                if not await unsupported_btn.is_visible():
-                    unsupported_btn = page.locator('text="Continue anyway"').first
-
-                if await unsupported_btn.is_visible(timeout=5000):
-                    await logger.broadcast("⚠️ 检测到 SAP 的『浏览器不受支持』安全墙，正在强行突破...")
-                    await unsupported_btn.click()
-                    await page.wait_for_timeout(3000) # 给页面跳转留出缓冲时间
-            except:
+                await page.wait_for_load_state("networkidle")
+                ok_btn = page.locator("button:has-text('OK'), ui5-button:has-text('OK'), button:has-text('Accept All')").first
+                if await ok_btn.is_visible(timeout=5000):
+                    await logger.broadcast("🧹 发现隐私协议弹窗，正在自动清理...")
+                    checkbox = page.locator("input[type='checkbox']").first
+                    if await checkbox.is_visible(): 
+                        await checkbox.check()
+                    await ok_btn.click()
+                    await asyncio.sleep(3) 
+            except Exception:
                 pass
 
-            # 静默处理可能出现的 Cookie 弹窗
-            try:
-                cookie_btn = page.locator('button:has-text("Accept All"), button:has-text("同意")').first
-                if await cookie_btn.is_visible(timeout=5000):
-                    await cookie_btn.click()
-            except:
-                pass
-
-            await logger.broadcast(f"🔑 正在寻找登录框并输入账号: {SAP_USER}")
-            await page.locator('input[name="j_username"], input[type="email"], input[type="text"]').first.fill(SAP_USER)
-            await page.locator('button[type="submit"], button:has-text("Continue"), button[id="logOnFormSubmit"]').first.click()
-            
-            await logger.broadcast("🔑 正在输入密码并验证...")
-            # 确保密码框真的弹出来了再操作
-            await page.wait_for_selector('input[name="j_password"], input[type="password"]', timeout=30000)
-            await page.locator('input[name="j_password"], input[type="password"]').first.fill(SAP_PASS)
-            await page.locator('button[type="submit"], button:has-text("Log On")').first.click()
-            
-            await logger.broadcast("⏳ 正在等待 SAP 控制台加载 (PaaS 环境初次渲染极慢，请耐心等待 1-2 分钟)...")
-            await page.wait_for_selector('a:has-text("trial"), div.sapUiBody', timeout=90000)
-            await logger.broadcast("✅ 成功进入 SAP BTP 控制台主体！")
+            await page.wait_for_selector('text="Kyma Environment", text="kyma"', timeout=90000)
+            await logger.broadcast("✅ 成功突围！已进入 Kyma 管理界面！")
 
             # ==========================================
-            # 第二阶段：进入 Subaccount 并判断 Kyma 状态
+            # 第二阶段：判断 Kyma 状态
             # ==========================================
-            await logger.broadcast("🔍 正在直接跳转至 Subaccount 页面寻找 Kyma 实例...")
-            await page.goto("https://cockpit.hanatrial.ondemand.com/trial/#/globalaccount/trial/subaccount/trial", wait_until="domcontentloaded")
-            await page.wait_for_selector('text="Kyma Environment", text="kyma"', timeout=60000)
-
             # 抓取页面上的剩余天数文本
             page_text = await page.content()
             expire_match = re.search(r"expires in (\d+) days", page_text)
@@ -109,10 +90,10 @@ async def run_full_flow(logger):
             if needs_rebuild:
                 await logger.broadcast("💣 触发重置协议，准备销毁并重建 Kyma 实例...")
                 
-                # 点击删除按钮
                 delete_btn = page.locator('button[aria-label="Delete Kyma Environment"], button:has-text("Delete")').first
                 if await delete_btn.is_visible():
                     await delete_btn.click()
+                    await asyncio.sleep(1)
                     # 二次确认弹窗
                     confirm_btn = page.locator('button:has-text("Delete")').filter(has_text="Delete")
                     if await confirm_btn.is_visible():
@@ -158,7 +139,7 @@ async def run_full_flow(logger):
 
         except Exception as e:
             # ==========================================
-            # 🚑 异常捕获：神级除错系统 (截图 + TG 告警)
+            # 🚑 异常捕获：保留神级除错系统 (截图 + TG)
             # ==========================================
             current_url = page.url
             page_title = await page.title()
@@ -170,20 +151,18 @@ async def run_full_flow(logger):
             await logger.broadcast(f"🏷️ 页面标题: {page_title}")
             await logger.broadcast("==================================================")
             
-            # 截取当前出错页面的图片
             screenshot_path = "crash_screenshot.png"
             try:
                 await page.screenshot(path=screenshot_path)
                 await logger.broadcast("📸 已成功截取案发现场快照。")
-            except Exception as screenshot_error:
+            except:
                 await logger.broadcast("⚠️ 截图失败，可能页面已销毁。")
 
-            # 推送至 Telegram
             tg_token = os.getenv("TG_BOT_TOKEN")
             tg_chat_id = os.getenv("TG_CHAT_ID")
             
             if tg_token and tg_chat_id and os.path.exists(screenshot_path):
-                await logger.broadcast("✈️ 正在将现场截图与诊断报告发送至 Telegram...")
+                await logger.broadcast("✈️ 正在将现场截图推送至 Telegram...")
                 try:
                     caption = f"🚨 **SAP 自动化坠机警报**\n\n📍 **网址:** {current_url}\n🏷️ **标题:** {page_title}\n❌ **报错信息:**\n`{error_msg[:300]}...`"
                     caption_escaped = shlex.quote(caption) 
@@ -191,20 +170,11 @@ async def run_full_flow(logger):
                     cmd = f'curl -s -X POST "https://api.telegram.org/bot{tg_token}/sendPhoto" -F chat_id="{tg_chat_id}" -F photo="@{screenshot_path}" -F parse_mode="Markdown" -F caption={caption_escaped}'
                     
                     process = await asyncio.create_subprocess_shell(
-                        cmd,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE
+                        cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                     )
-                    stdout, stderr = await process.communicate()
-                    
-                    if process.returncode == 0:
-                        await logger.broadcast("✅ 案发现场截图已成功投递至你的 Telegram，请查收！")
-                    else:
-                        await logger.broadcast(f"❌ Telegram 图片推送失败:\n{stderr.decode()}")
+                    await process.communicate()
                 except Exception as tg_e:
-                    await logger.broadcast(f"❌ Telegram 请求执行异常: {str(tg_e)}")
-            else:
-                await logger.broadcast("⚠️ 未检测到 TG_BOT_TOKEN 环境变量，已跳过截图推送。")
+                    await logger.broadcast(f"❌ TG 推送异常: {str(tg_e)}")
                 
         finally:
             await browser.close()
