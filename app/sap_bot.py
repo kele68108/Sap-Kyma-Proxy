@@ -134,13 +134,11 @@ async def run_full_flow(logger):
             await logger.broadcast(f"🖱️ 正在寻找并进入子账户 ({SAP_SUBACCOUNT})...")
             kyma_target = page.locator("text=/Kyma Environment|Kyma 环境/i").first
             if await kyma_target.count() == 0:
-                # 动态点击子账户卡片
                 subaccount_card = page.locator(f"text=/{SAP_SUBACCOUNT}/i").first
                 if await subaccount_card.count() == 0:
                     subaccount_card = page.locator("text=/trial/i").nth(1)
                 await subaccount_card.click(force=True)
             
-            # --- 杀手锏：全屏弹窗清理器 ---
             await logger.broadcast("🧹 页面跳转中，等待 6 秒渲染后启动弹窗清理器...")
             await asyncio.sleep(6) 
             
@@ -149,7 +147,6 @@ async def run_full_flow(logger):
                 await page.keyboard.press("Escape")
                 await asyncio.sleep(0.5)
                 
-            # 补刀：点击隐藏的关闭按钮
             close_selectors = [
                 "button[aria-label='Close']", "button[title='Close']", 
                 "button[aria-label='关闭']", "button[title='关闭']",
@@ -161,7 +158,6 @@ async def run_full_flow(logger):
                     for i in range(await btns.count()):
                         await btns.nth(i).click(force=True)
                 except: pass
-            # -----------------------------
             
             await logger.broadcast("🔍 正在扫描 Kyma 环境配置区...")
             kyma_found = False
@@ -213,23 +209,18 @@ async def run_full_flow(logger):
                         await asyncio.sleep(10)
                         wait_del += 1
                 
-                # ========================================================
-                # 修复点：拉起实例并确认弹窗
-                # ========================================================
                 await logger.broadcast("✨ 旧实例已销毁/不存在，正在拉起全新 Kyma 集群...")
                 await page.locator('button:has-text("Enable Kyma"), button:has-text("启用 Kyma")').first.click(force=True)
                 
                 await logger.broadcast("⏳ 等待配置弹窗渲染...")
-                await asyncio.sleep(4) # 给弹窗动画预留时间
+                await asyncio.sleep(4) 
                 
                 try:
-                    # 获取屏幕上最后的“创建/Create”按钮（通常弹窗层级最高，排在最后）
                     create_btn = page.locator('button:has-text("Create"), button:has-text("创建")').last
                     if await create_btn.count() > 0:
                         await create_btn.click(force=True)
                         await logger.broadcast("✅ 已在弹窗中成功点击『创建』！")
                     else:
-                        # 兜底：原生JS强制执行点击
                         await page.evaluate("""() => {
                             const btns = Array.from(document.querySelectorAll('button, bdi, span'));
                             const createBtn = btns.find(b => b.textContent.trim() === '创建' || b.textContent.trim() === 'Create');
@@ -256,16 +247,36 @@ async def run_full_flow(logger):
                     await logger.broadcast(f"   ... 第 {wait_minutes} 分钟，正在分配集群，请保持耐心。")
 
             # ==========================================
-            # 第五阶段：提取灵魂 (下载 Kubeconfig)
+            # 🌟 第五阶段：提取灵魂 (API 级底层窃取)
             # ==========================================
             await logger.broadcast("📥 正在向 SAP 申请 Kubernetes 集群管理凭证...")
-            async with page.expect_download() as download_info:
-                await page.locator('a:has-text("Kubeconfig")').first.click(force=True)
+            await asyncio.sleep(5) # 给凭证生成留点时间
             
-            download = await download_info.value
-            await download.save_as("kubeconfig.yaml")
-            await logger.broadcast("✅ 凭证获取成功！自动化浏览器任务结束，即将移交部署引擎。")
+            # 定位含有 'kubeconfig' 的超链接，提取真实 URL
+            kube_locator = page.locator("a[href*='kubeconfig']").first
+            
+            if await kube_locator.count() > 0:
+                kube_url = await kube_locator.get_attribute("href")
+                await logger.broadcast(f"🔗 成功截获凭证底层直链 API，准备强行拉取...")
+                
+                # 直接调用 API 抓取文件内容，完美规避前端下载拦截
+                req_response = await context.request.get(kube_url)
+                if req_response.ok:
+                    yaml_content = await req_response.text()
+                    with open("kubeconfig.yaml", "w", encoding="utf-8") as f:
+                        f.write(yaml_content)
+                    await logger.broadcast("✅ 凭证文件提取成功并已写入本地！")
+                else:
+                    raise Exception(f"底层 API 拉取失败，HTTP 状态码: {req_response.status}")
+            else:
+                # 如果页面改版了连 href 都找不到，启用老方案点击兜底
+                await logger.broadcast("⚠️ 未找到明文 API 直链，回退至模拟浏览器下载模式...")
+                async with page.expect_download() as download_info:
+                    await page.locator("text=/Kubeconfig/i").first.click(force=True)
+                download = await download_info.value
+                await download.save_as("kubeconfig.yaml")
 
+            await logger.broadcast("🚀 自动化浏览器任务圆满结束，即将移交 K8s 部署引擎！")
             await deployer.run_deploy(logger)
 
         except Exception as e:
