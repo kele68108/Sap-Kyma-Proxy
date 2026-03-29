@@ -2,6 +2,7 @@ import os
 import re
 import subprocess
 import asyncio
+import uuid
 
 async def run_deploy(logger):
     await logger.broadcast("⚙️ 部署引擎已接管，正在解析集群凭证...")
@@ -35,6 +36,14 @@ async def run_deploy(logger):
         sub_token = os.getenv("SUB_TOKEN", "kele666")
         tg_bot_token = os.getenv("TG_BOT_TOKEN", "")
         tg_chat_id = os.getenv("TG_CHAT_ID", "")
+        
+        # UUID 判定逻辑
+        proxy_uuid = os.getenv("PROXY_UUID", "").strip()
+        if not proxy_uuid:
+            proxy_uuid = str(uuid.uuid4())
+            await logger.broadcast(f"🛡️ 未提供固定 UUID，已随机生成强加密 UUID: {proxy_uuid}")
+        else:
+            await logger.broadcast(f"🛡️ 正在使用环境变量指定的固定 UUID: {proxy_uuid}")
 
         # 核心替换逻辑
         yaml_text = yaml_text.replace("YOUR_KYMA_DOMAIN", new_kyma_domain)
@@ -43,6 +52,7 @@ async def run_deploy(logger):
         yaml_text = yaml_text.replace("YOUR_SUB_TOKEN", sub_token)
         yaml_text = yaml_text.replace("YOUR_TG_BOT_TOKEN", tg_bot_token)
         yaml_text = yaml_text.replace("YOUR_TG_CHAT_ID", tg_chat_id)
+        yaml_text = yaml_text.replace("YOUR_UUID", proxy_uuid)  # 替换 UUID
 
         # 生成待部署文件
         with open("deploy_ready.yaml", "w") as f:
@@ -55,10 +65,8 @@ async def run_deploy(logger):
     # 3. 通过 Kubectl 执行物理部署
     await logger.broadcast("🚀 正在向 Kubernetes 集群下发 All in One 矩阵配置...")
     try:
-        # 使用 subprocess 调用容器内安装好的 kubectl
         cmd = "kubectl --kubeconfig=kubeconfig.yaml apply -f deploy_ready.yaml"
         
-        # 因为 kubectl apply 可能会有少量耗时，使用 asyncio 包装一下防阻塞
         process = await asyncio.create_subprocess_shell(
             cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -69,13 +77,9 @@ async def run_deploy(logger):
         if process.returncode == 0:
             await logger.broadcast("✅ 集群配置下发成功！所有 Pod 已进入拉起状态。")
             await logger.broadcast("⏳ 请等待 2-3 分钟 AWS 分配负载均衡 IP，系统将自动把最终面板推送至你的 Telegram！")
-            await logger.broadcast(f"🔗 预计面板访问地址: https://{new_kyma_domain}/{sub_token}/")
+            await logger.broadcast(f"🔗 面板访问直连 URL 将在初始化完成后生效。")
         else:
             await logger.broadcast(f"❌ Kubectl 部署失败:\n{stderr.decode()}")
             
     except Exception as e:
         await logger.broadcast(f"❌ 命令执行异常: {str(e)}")
-
-    # 清理敏感文件 (可选)
-    # os.remove("kubeconfig.yaml")
-    # os.remove("deploy_ready.yaml")
