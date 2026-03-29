@@ -14,8 +14,15 @@ async def run_full_flow(logger):
         return
 
     async with async_playwright() as p:
-        # 纯净启动，搭配升级后的 v1.48 镜像内核
-        browser = await p.chromium.launch(headless=True)
+        # 🌟 核心修复：必须加回 Docker 容器专用的保命参数，否则会导致浏览器进程死锁！
+        browser = await p.chromium.launch(
+            headless=True,
+            args=[
+                '--no-sandbox',             # 突破 PaaS 容器沙盒限制
+                '--disable-dev-shm-usage',  # 突破 Docker 默认 64M 共享内存限制
+                '--disable-gpu'
+            ]
+        )
         context = await browser.new_context(viewport={'width': 1920, 'height': 1080})
         context.set_default_timeout(60000)
         page = await context.new_page()
@@ -27,15 +34,14 @@ async def run_full_flow(logger):
             await logger.broadcast("🌐 正在直接访问 SAP BTP Trial Subaccount...")
             await page.goto("https://cockpit.hanatrial.ondemand.com/trial/#/globalaccount/trial/subaccount/trial", wait_until="domcontentloaded", timeout=90000)
             
-            # 🌟 核心突破：霸王硬上弓！专门对付“浏览器不受支持”页面
+            # 🌟 霸王硬上弓！专门对付“浏览器不受支持”页面
             try:
                 await logger.broadcast("🛡️ 正在进行前置路障排查...")
-                # 兼容中文的“仍然继续”、“仍要继续”或英文的“Continue anyway”
                 bypass_btn = page.locator('text="仍然继续", text="Continue anyway", text="仍要继续", button:has-text("继续")').first
                 if await bypass_btn.is_visible(timeout=8000):
                     await logger.broadcast("⚠️ 遭遇 SAP 的『浏览器不受支持』拦截墙！正在一拳踹开...")
                     await bypass_btn.click(force=True)
-                    await asyncio.sleep(4) # 给页面跳转到真实登录框留出时间
+                    await asyncio.sleep(4) 
                 else:
                     await logger.broadcast("✅ 前方道路畅通，未见拦截墙。")
             except Exception:
