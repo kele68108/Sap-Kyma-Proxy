@@ -1,0 +1,718 @@
+# ==============================================================================
+# Kyma Ultimate Proxy Master YAML (Auto-NLB + Pro UI + Telegram Edition)
+# 包含: VLESS(直连)+WebUI, VLESS(Argo), Hysteria2(UDP),Tuic v5(UDP),Socks5(TCP) 5合1节点
+# ==============================================================================
+# 在部署之前，请用编辑器全局搜索并替换以下 7 个大写占位符：
+# YOUR_KYMA_DOMAIN：  你的 Kyma 真实分配的域名。
+# YOUR_ARGO_DOMAIN：  你的 Argo 隧道域名。
+# YOUR_ARGO_TOKEN：   你的 Argo 隧道TOKEN。
+# YOUR_SUB_TOKEN：    你的 订阅私密路径TOKEN。
+# YOUR_TG_BOT_TOKEN： 你的 Telegram Bot Token (例如 123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11)。
+# YOUR_TG_CHAT_ID：   你的 Telegram 接收账号或群组 ID (例如 123456789)。
+# YOUR_UUID：         你的 UUID 
+
+# 1️⃣ 命名空间
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: my-proxy
+  labels:
+    istio-injection: enabled
+
+---
+# 2️⃣ RBAC 权限控制 (允许 Pod 读取 Service 信息)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: proxy-sa
+  namespace: my-proxy
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: proxy-role
+  namespace: my-proxy
+rules:
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: proxy-rolebinding
+  namespace: my-proxy
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: proxy-role
+subjects:
+- kind: ServiceAccount
+  name: proxy-sa
+  namespace: my-proxy
+
+---
+# 3️⃣ 配置文件 (包含 5 大节点配置与前台 UI)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: master-configs
+  namespace: my-proxy
+data:
+  nginx.conf: |
+    events { worker_connections 1024; }
+    http {
+      server {
+        listen 8080;
+        
+        location = / { return 404; }
+
+        location /YOUR_SUB_TOKEN/ {
+          alias /usr/share/nginx/html/;
+          index index.html;
+        }
+
+        location /direct {
+          proxy_redirect off;
+          proxy_pass http://127.0.0.1:10000;
+          proxy_http_version 1.1;
+          proxy_set_header Upgrade $http_upgrade;
+          proxy_set_header Connection "upgrade";
+          proxy_set_header Host $http_host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        }
+      }
+    }
+
+  config-direct.json: |
+    {
+      "log": { "loglevel": "warning" },
+      "inbounds": [{
+        "port": 10000,
+        "listen": "127.0.0.1",
+        "protocol": "vless",
+        "settings": {
+          "clients": [{"id": "YOUR_UUID", "level": 0, "email": "direct@kyma"}],
+          "decryption": "none"
+        },
+        "streamSettings": { "network": "ws", "wsSettings": { "path": "/direct" } }
+      }],
+      "outbounds": [{ "protocol": "freedom" }]
+    }
+
+  config-tunnel.json: |
+    {
+      "log": { "loglevel": "warning" },
+      "inbounds": [{
+        "port": 8001, 
+        "listen": "127.0.0.1", 
+        "protocol": "vless",
+        "settings": {
+          "clients": [{"id": "YOUR_UUID", "level": 0, "email": "tunnel@kyma"}],
+          "decryption": "none"
+        },
+        "streamSettings": { "network": "ws", "wsSettings": { "path": "/tunnel" } }
+      }],
+      "outbounds": [{ "protocol": "freedom" }]
+    }
+
+  config-tuic.json: |
+    {
+      "log": {
+        "level": "warn"
+      },
+      "inbounds": [
+        {
+          "type": "tuic",
+          "tag": "tuic-in",
+          "listen": "::",
+          "listen_port": 8443,
+          "users": [
+            {
+              "uuid": "YOUR_UUID",
+              "password": "tuic666"
+            }
+          ],
+          "congestion_control": "bbr",
+          "tls": {
+            "enabled": true,
+            "certificate_path": "/etc/tuic/cert.pem",
+            "key_path": "/etc/tuic/key.pem",
+            "alpn": ["h3", "spdy/3.1"]
+          }
+        }
+      ],
+      "outbounds": [
+        {
+          "type": "direct",
+          "tag": "direct"
+        }
+      ]
+    }
+
+  config-socks5.json: |
+    {
+      "log": {
+        "level": "warn"
+      },
+      "inbounds": [
+        {
+          "type": "socks",
+          "tag": "socks-in",
+          "listen": "::",
+          "listen_port": 10800,
+          "users": [
+            {
+              "username": "tBqcmzxm",
+              "password": "Rjqm0i4kv49jIWAa"
+            }
+          ]
+        }
+      ],
+      "outbounds": [
+        {
+          "type": "direct",
+          "tag": "direct"
+        }
+      ]
+    }
+
+  index.html: |
+    <!doctype html>
+    <html lang="zh-CN">
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width,initial-scale=1" />
+      <title>Sap Kyma Proxy</title>
+      <style>
+        :root{ --bg: #0b1220; --panel: rgba(15, 23, 42, 0.88); --line: rgba(148, 163, 184, 0.18); --text: #e5eefc; --muted: #94a3b8; --accent: #3b82f6; --success: #22c55e; }
+        * { box-sizing: border-box; }
+        body{ margin:0; font-family: system-ui, sans-serif; color: var(--text); background: #0b1220; min-height: 100vh; }
+        .wrap{ max-width: 1180px; margin: 0 auto; padding: 28px 20px; }
+        .hero{ border: 1px solid var(--line); background: var(--panel); border-radius: 24px; overflow: hidden; }
+        .hero-top{ padding: 18px 20px; border-bottom: 1px solid var(--line); font-weight: bold; }
+        
+        .hero-main{ padding: 24px; display: flex; flex-direction: column; gap: 24px; }
+        
+        .tabs-card { border: 1px solid var(--line); border-radius: 18px; padding: 20px; background: rgba(30,41,59,.42); display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+        .tab-btn{ 
+          background: rgba(15,23,42,.75); color: var(--text); border: 1px solid var(--line); 
+          padding: 12px 10px; border-radius: 12px; cursor: pointer; transition: 0.2s; 
+          font-weight: bold; font-size: 14px;
+          flex: 1 1 0%; min-width: 150px; text-align: center;
+        }
+        .tab-btn.active, .tab-btn:hover{ background: var(--accent); border-color: var(--accent); }
+        
+        .content-body { display: grid; grid-template-columns: 320px 1fr; gap: 24px; transition: 0.3s; }
+        .content-body.no-qr { grid-template-columns: 1fr; }
+        
+        .qr-card, .info-card{ border: 1px solid var(--line); border-radius: 18px; padding: 20px; background: rgba(30,41,59,.42); display: flex; flex-direction: column; }
+        .qr-box{ width: 100%; aspect-ratio: 1; background: #fff; border-radius: 24px; padding: 14px; display:grid; place-items:center; margin-bottom: 15px;}
+        .qr-box img{ width: 100%; height: 100%; border-radius: 14px; }
+        
+        .link-box{ font-family: monospace; font-size: 13px; line-height: 1.5; word-break: break-all; color: #dbeafe; background: rgba(2,6,23,.5); padding: 15px; border-radius: 10px; border: 1px solid var(--line); min-height: 120px; flex-grow: 1; margin-bottom: 15px; white-space: pre-wrap;}
+        
+        .action-group { display: flex; gap: 16px; margin-top: 5px; }
+        .copy-btn, .tg-btn { 
+          flex: 1; border: none; border-radius: 14px; padding: 14px; 
+          cursor: pointer; font-size: 15px; font-weight: bold; color: white; transition: 0.2s; 
+          text-align: center; display: flex; align-items: center; justify-content: center; gap: 6px;
+          background: var(--accent); 
+        }
+        .copy-btn:hover, .tg-btn:hover { background: #2563eb; }
+        
+        @media (max-width: 980px){ .content-body{ grid-template-columns: 1fr; } .action-group { flex-direction: column; } }
+      </style>
+    </head>
+    <body>
+      <div class="wrap">
+        <h2>🚀 Sap Kyma Proxy</h2>
+        <section class="hero">
+          <div class="hero-top">🌍 节点订阅台 (All in One)</div>
+          <div class="hero-main">
+            
+            <div class="tabs-card">
+              <button class="tab-btn" onclick="switchNode('all', event)">🌍 所有节点</button>
+              <button class="tab-btn" onclick="switchNode('direct', event)">⚡ VLESS 直连 (Web)</button>
+              <button class="tab-btn" onclick="switchNode('argo', event)">🛡️ VLESS Argo (隧道)</button>
+              <button class="tab-btn" onclick="switchNode('hy2', event)">🚀 Hysteria2 (UDP)</button>
+              <button class="tab-btn" onclick="switchNode('tuic', event)">🏎️ TUIC v5 (UDP)</button>
+              <button class="tab-btn" onclick="switchNode('socks5', event)">🧦 Socks5 (TCP)</button>
+            </div>
+
+            <div class="content-body" id="contentBody">
+              <div class="qr-card" id="qrCard">
+                <div style="color:var(--muted); margin-bottom:10px; text-align:center; font-weight:bold;">扫码添加节点</div>
+                <div class="qr-box"><img id="qr" alt="QR Code" /></div>
+              </div>
+              
+              <div class="info-card">
+                <div style="color:var(--muted); margin-bottom:10px; font-weight:bold;">节点 URI 配置 (已加密为 Base64)</div>
+                <div id="linkBox" class="link-box">请稍候...</div>
+                
+                <div class="action-group">
+                  <button id="copyBtn" class="copy-btn">🔗 复制分享链接</button>
+                  <button id="tgBtn" class="tg-btn">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M21.5 2L2 10.5L9 14M21.5 2L15 22L9 14M21.5 2L9 14M9 14V20.5L13 17" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <span>推送至 Telegram</span>
+                  </button>
+                </div>
+
+              </div>
+            </div>
+
+          </div>
+        </section>
+      </div>
+      <script>
+        const nodes = {
+          direct: "vless://YOUR_UUID@YOUR_KYMA_DOMAIN:443?encryption=none&security=tls&sni=YOUR_KYMA_DOMAIN&type=ws&path=%2Fdirect#SAP-KYMA-VLESS",
+          argo: "vless://YOUR_UUID@sin.cfip.oxxxx.de:443?encryption=none&security=tls&sni=YOUR_ARGO_DOMAIN&type=ws&path=%2Ftunnel#SAP-KYMA-ARGO",
+          hy2: "hysteria2://4MKyhj1JzE@__HY2_TARGET__:443?sni=fake.example.com&obfs=salamander&obfs-password=msOy13(xcTJr69xn&insecure=1#SAP-KYMA-HY2",
+          tuic: "tuic://YOUR_UUID:tuic666@__TUIC_TARGET__:8443?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=fake.example.com&allow_insecure=1#SAP-KYMA-TUIC",
+          socks5: "socks://dEJxY216eG06UmpxbTBpNGt2NDlqSVdBYQ@__SOCKS5_TARGET__:1080#SAP-KYMA-SOCKS5"
+        };
+        nodes.all = [nodes.direct, nodes.argo, nodes.hy2, nodes.tuic, nodes.socks5].join("\n");
+        
+        let rawLink = "";     
+        let base64Link = "";  
+
+        function switchNode(type, e) {
+          document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+          if (e && e.target) {
+            e.target.classList.add('active');
+          } else {
+            const btn = document.querySelector(`button[onclick="switchNode('${type}', event)"]`);
+            if(btn) btn.classList.add('active');
+          }
+          
+          rawLink = nodes[type];
+          base64Link = btoa(unescape(encodeURIComponent(rawLink)));
+          
+          document.getElementById('linkBox').textContent = base64Link;
+          
+          const qrCard = document.getElementById('qrCard');
+          const contentBody = document.getElementById('contentBody');
+          const qr = document.getElementById('qr');
+          const tgBtn = document.getElementById('tgBtn');
+          
+          if (type === 'all') {
+             qrCard.style.display = 'none';
+             contentBody.classList.add('no-qr');
+             tgBtn.style.display = 'flex';
+          } else {
+             qrCard.style.display = 'flex';
+             contentBody.classList.remove('no-qr');
+             tgBtn.style.display = 'none';
+             qr.src = 'https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=10&data=' + encodeURIComponent(rawLink);
+          }
+        }
+
+        document.getElementById('copyBtn').addEventListener('click', () => {
+          navigator.clipboard.writeText(rawLink).then(() => {
+            alert(rawLink.includes('\n') ? '已复制所有明文节点！' : '已复制节点明文链接！');
+          });
+        });
+
+        // Telegram 原生 API 手动静默推送逻辑
+        document.getElementById('tgBtn').addEventListener('click', () => {
+          const btnText = document.querySelector('#tgBtn span');
+          const originalText = btnText.innerText;
+          btnText.innerText = "⏳ 推送中...";
+          document.getElementById('tgBtn').disabled = true;
+
+          const tgToken = "YOUR_TG_BOT_TOKEN";
+          const tgChat = "YOUR_TG_CHAT_ID";
+          
+          let msg = "🚀 <b>Sap Kyma All in One (手动推送)！</b>\n\n";
+          msg += "⚡ <b>VLESS 直连:</b>\n<code>" + nodes.direct + "</code>\n\n";
+          msg += "🛡️ <b>VLESS Argo:</b>\n<code>" + nodes.argo + "</code>\n\n";
+          msg += "🚀 <b>Hysteria2:</b>\n<code>" + nodes.hy2 + "</code>\n\n";
+          msg += "🏎️ <b>TUIC v5:</b>\n<code>" + nodes.tuic + "</code>\n\n";
+          msg += "🧦 <b>Socks5:</b>\n<code>" + nodes.socks5 + "</code>";
+
+          fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: tgChat,
+              parse_mode: 'HTML',
+              text: msg
+            })
+          })
+          .then(res => res.json())
+          .then(data => {
+            if(data.ok) alert('✅ 已成功推送到你的 Telegram Bot！');
+            else alert('❌ 推送失败：' + data.description);
+          })
+          .catch(err => {
+            alert('❌ 推送异常，请检查网络！');
+          })
+          .finally(() => {
+            btnText.innerText = originalText;
+            document.getElementById('tgBtn').disabled = false;
+          });
+        });
+
+        window.onload = () => switchNode('all', null);
+      </script>
+    </body>
+    </html>
+
+---
+# 4️⃣ 机密文件 (Hysteria2 / TUIC 共享证书)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hy2-files
+  namespace: my-proxy
+type: Opaque
+stringData:
+  config.json: |
+    {
+      "listen": ":10086", "protocol": "hysteria2",
+      "tls": { "cert": "/etc/hysteria/cert.pem", "key": "/etc/hysteria/key.pem" },
+      "auth": { "type": "password", "password": "4MKyhj1JzE" },
+      "obfs": { "type": "salamander", "salamander": { "password": "msOy13(xcTJr69xn" } }
+    }
+  cert.pem: |
+    -----BEGIN CERTIFICATE-----
+    MIIDFzCCAf+gAwIBAgIUdnHpHLX3388Vk/rjBgKUrIslCNgwDQYJKoZIhvcNAQEL
+    BQAwGzEZMBcGA1UEAwwQZmFrZS5leGFtcGxlLmNvbTAeFw0yNTEwMTgxNzA5MTVa
+    Fw0yNjEwMTgxNzA5MTVaMBsxGTAXBgNVBAMMEGZha2UuZXhhbXBsZS5jb20wggEi
+    MA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQCp2l+HKdG7zat3L4kGxHNTGC1b
+    mvgy2g3MsXH4VrKGKcm/ov6gzrhUn8vXulqw8CU+juR7B1VywXvo3l9TyU7d4OdT
+    2mtkRPEE8KF1/oX2ovtSYGg7VNBVreElOhYnZ6pzTjVMqtSCjuZziWogBvvyrCI1
+    DAE8WeJiS8iF58kCe4zuR+6dwxEQqFjBuUkUAy46q24MOvjITusE97ODx0qQe69F
+    ysSnTKFKWZD8bjTz+dho2F+GoGpTpCIttuNAzR/IX67824F04WtDu8Wqs3s+X1cy
+    jf51X3FE1Mf9l4v90pGpwblW4z94psncTgPqG4Tn4wF6quzaaoOVVw7EWs0TAgMB
+    AAGjUzBRMB0GA1UdDgQWBBQOrWW02cgxBxYkU9swMlisdWZp4TAfBgNVHSMEGDAW
+    gBQOrWW02cgxBxYkU9swMlisdWZp4TAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3
+    DQEBCwUAA4IBAQAvhu3ImX3eqcca9dZWxzJXGdu9/NBGmJqIs/K7WnpHPiRQGHgO
+    n9Jl/GavGhapSOIPW8Fb+NqAE8f5gDoyRD0Y3onAaOZwWv2QkoyRcRVff2Z6ys83
+    g9hQA/edsWoT5zF4xRx35ZHlhcXEugy4kgOkSRdgYRQfSnrPFqZsDh1wZSnSqQRr
+    sFJ5CTMjBbco9/csO02swIaaidMhexYr04aMY/5xbrzIYh8jbJ5ybQwhKtZ/GEOa
+    lJqgyhITx1MSSwWJIjWhX75zOb84jRzYgUEVSnTPcTuvFU6I3bWMwl8k2H3N8cfB
+    zCi/Ys2nEzgAPI75h+O2+DYnwuYwqzwl+hVL
+    -----END CERTIFICATE-----
+  key.pem: |
+    -----BEGIN PRIVATE KEY-----
+    MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCp2l+HKdG7zat3
+    L4kGxHNTGC1bmvgy2g3MsXH4VrKGKcm/ov6gzrhUn8vXulqw8CU+juR7B1VywXvo
+    3l9TyU7d4OdT2mtkRPEE8KF1/oX2ovtSYGg7VNBVreElOhYnZ6pzTjVMqtSCjuZz
+    iWogBvvyrCI1DAE8WeJiS8iF58kCe4zuR+6dwxEQqFjBuUkUAy46q24MOvjITusE
+    97ODx0qQe69FysSnTKFKWZD8bjTz+dho2F+GoGpTpCIttuNAzR/IX67824F04WtD
+    u8Wqs3s+X1cyjf51X3FE1Mf9l4v90pGpwblW4z94psncTgPqG4Tn4wF6quzaaoOV
+    Vw7EWs0TAgMBAAECggEAC1YNxiGeY+BoLz428QKvh743WMPRCOPQw/ab2q0+oQGs
+    +2NPh0AEwXEg07cWUnTUp4Y17ZghtdUABhzBVAA9iUV3avtK65hGVcQRoqRoIHvk
+    Ni1FB6CzfuRqAGgODnc2wxdXK1TDdis/ajqjoJuWuS2P4uZ4NqTxHQpdycIcglPM
+    kxU6K5elc1QfWuVXryU7KmvjTdwkn6gar4nT1ssWtlVa7wrE6X2pxPxxOin8XABt
+    7u4xmh4TkwkDalK7gcHjRHjsieRyydmhlCYDYLh4qOeVOTMf1nl7KrVeKljZgywf
+    TexRsdIvfoNUrJiEec7hyZehHFAZlJe+KtE1TJZasQKBgQDtwEJJzuo0doOUk0Q+
+    jgYsvppizcURZiNUTJAbsPXmmVu+0IEd7Ly/N2zTH0ckh1RS3nRpEXUu8/628H6c
+    c54gdGFAA6GQufX4WEo3Ki91xg5C3wc1COIbyJTPgD4fbmuT6ZupXxdu/kQDVYWy
+    QVMJ1PdP1fvVOLlEOIfPs2XunQKBgQC24/AIQc5h/PabRQIPD1uRe6db6OzruetO
+    KrzYhM4GWtoZo2zFQ9WTBglKaW5R+eLcyMYGH/ium6lBX0Y3Uk+YiE5wrny9NVXE
+    wRfrhJ8Y8AzUIlfJcn/QJfLlqRGPcP1DKWdI2UBxCX8IjMy0UWFg8VwkmFKB/o6N
+    /a4c5eaDbwKBgBcPwB5SsMsX99lwk30R3611a5pL5WKzqpehuZTGDIQqugh/Rxb1
+    ALX3lVnBPfBgJCDJrTcH13sPddSe7VkVqe/x+gDwmTpln2NQhRpmwCXHaVi5M4TE
+    cNJLGYwrH1uDJXI6hbvfGnHMviIoqIhK59gbTUX0NrJPB0GDzkCqYSfNAoGBAKoH
+    PyBuDXELvDid70wQ+xBF5VGNOrXsItaI5QhmbyN5U0qCpJzAc847zmdfnTCZIFAi
+    V/dZwdiS3sfny1+jJlyoXERl85H0A8jnu1U59q84fLS7OOIPkMPyg97/T1QLt2i5
+    FUykrURpj7BjNextvBpkSUW8VviDsARR040KL0QBAoGAasu8dIwSADqJOGzSbSeY
+    umpbKxt827ngX6SJAMVQEroeldowQwgjSpnRytrYCAEn15pEOBps02EBg23cL4Wd
+    4ZjisfXCdjMJufR0IJueNDpBKyc+8nJpYrNXBgEplMdmFGf0hpgswVROcxU9hR1z
+    Jgf6vem+/1+hk4Uh4qW1FjI=
+    -----END PRIVATE KEY-----
+
+---
+# 5️⃣ Web UI + VLESS 直连
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proxy-web-direct
+  namespace: my-proxy
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: proxy-web-direct } }
+  template:
+    metadata:
+      labels: { app: proxy-web-direct }
+      annotations: 
+        sidecar.istio.io/inject: "true"
+        traffic.sidecar.istio.io/excludeOutboundIPRanges: "0.0.0.0/0"
+    spec:
+      serviceAccountName: proxy-sa
+      initContainers:
+      - name: nlb-injector
+        image: bitnami/kubectl:latest
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          echo "Waiting for AWS to provision NLB for Hy2..."
+          HY2_TARGET=""
+          while [ -z "$HY2_TARGET" ]; do
+            HY2_TARGET=$(kubectl get svc hy2-service -n my-proxy -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+            [ -z "$HY2_TARGET" ] && HY2_TARGET=$(kubectl get svc hy2-service -n my-proxy -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            [ -z "$HY2_TARGET" ] && sleep 5
+          done
+          echo "Hy2 NLB Target: $HY2_TARGET"
+
+          echo "Waiting for AWS to provision NLB for TUIC..."
+          TUIC_TARGET=""
+          while [ -z "$TUIC_TARGET" ]; do
+            TUIC_TARGET=$(kubectl get svc tuic-service -n my-proxy -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+            [ -z "$TUIC_TARGET" ] && TUIC_TARGET=$(kubectl get svc tuic-service -n my-proxy -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            [ -z "$TUIC_TARGET" ] && sleep 5
+          done
+          echo "TUIC NLB Target: $TUIC_TARGET"
+
+          echo "Waiting for AWS to provision NLB for Socks5..."
+          SOCKS5_TARGET=""
+          while [ -z "$SOCKS5_TARGET" ]; do
+            SOCKS5_TARGET=$(kubectl get svc socks5-service -n my-proxy -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+            [ -z "$SOCKS5_TARGET" ] && SOCKS5_TARGET=$(kubectl get svc socks5-service -n my-proxy -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            [ -z "$SOCKS5_TARGET" ] && sleep 5
+          done
+          echo "Socks5 NLB Target: $SOCKS5_TARGET"
+
+          echo "Injecting targets into HTML..."
+          cp /template/index.html /app/html/index.html
+          sed -i "s/__HY2_TARGET__/$HY2_TARGET/g" /app/html/index.html
+          sed -i "s/__TUIC_TARGET__/$TUIC_TARGET/g" /app/html/index.html
+          sed -i "s/__SOCKS5_TARGET__/$SOCKS5_TARGET/g" /app/html/index.html
+          echo "Injection complete! Starting Web UI..."
+        volumeMounts:
+        - name: configs-tmpl
+          mountPath: /template/index.html
+          subPath: index.html
+        - name: web-root
+          mountPath: /app/html
+      containers:
+      - name: nginx-ui
+        image: nginx:alpine
+        ports: [{ containerPort: 8080 }]
+        volumeMounts:
+        - name: configs-tmpl
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
+        - name: web-root
+          mountPath: /usr/share/nginx/html
+      - name: xray-core
+        image: teddysun/xray:latest
+        command: ["/usr/bin/xray", "-config", "/etc/xray/config.json"]
+        volumeMounts:
+        - name: configs-tmpl
+          mountPath: /etc/xray/config.json
+          subPath: config-direct.json
+      volumes:
+      - name: configs-tmpl
+        configMap: { name: master-configs }
+      - name: web-root
+        emptyDir: {}
+
+---
+# 6️⃣ VLESS Argo 部署
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proxy-argo
+  namespace: my-proxy
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: proxy-argo } }
+  template:
+    metadata:
+      labels: { app: proxy-argo }
+      annotations: { sidecar.istio.io/inject: "false" }
+    spec:
+      containers:
+      - name: xray-core
+        image: teddysun/xray:latest
+        command: ["/usr/bin/xray", "-config", "/etc/xray/config.json"]
+        volumeMounts:
+        - name: configs
+          mountPath: /etc/xray/config.json
+          subPath: config-tunnel.json
+      - name: cloudflared
+        image: cloudflare/cloudflared:latest
+        command: ["cloudflared", "tunnel", "--no-autoupdate", "run", "--token", "YOUR_ARGO_TOKEN"]
+      volumes:
+      - name: configs
+        configMap: { name: master-configs }
+
+---
+# 7️⃣ Hysteria2 部署 (🌟 已回滚为原生镜像与配置)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proxy-hy2
+  namespace: my-proxy
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: proxy-hy2 } }
+  template:
+    metadata:
+      labels: { app: proxy-hy2 }
+      annotations: { sidecar.istio.io/inject: "false" }
+    spec:
+      containers:
+      - name: hy2-container
+        image: tobyxdd/hysteria:latest
+        ports: [{ containerPort: 10086, protocol: UDP }]
+        command: ["/usr/local/bin/hysteria", "server", "-c", "/etc/hysteria/config.json"]
+        volumeMounts:
+        - name: secret-volume
+          mountPath: /etc/hysteria
+          readOnly: true
+      volumes:
+      - name: secret-volume
+        secret: { secretName: hy2-files }
+
+---
+# 8️⃣ TUIC v5 部署
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proxy-tuic
+  namespace: my-proxy
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: proxy-tuic } }
+  template:
+    metadata:
+      labels: { app: proxy-tuic }
+      annotations: { sidecar.istio.io/inject: "false" }
+    spec:
+      containers:
+      - name: tuic-server
+        image: ghcr.io/sagernet/sing-box:v1.13.3
+        ports: [{ containerPort: 8443, protocol: UDP }]
+        command: ["sing-box", "run", "-c", "/etc/tuic/config.json"]
+        volumeMounts:
+        - name: configs
+          mountPath: /etc/tuic/config.json
+          subPath: config-tuic.json
+        - name: secret-volume
+          mountPath: /etc/tuic/cert.pem
+          subPath: cert.pem
+          readOnly: true
+        - name: secret-volume
+          mountPath: /etc/tuic/key.pem
+          subPath: key.pem
+          readOnly: true
+      volumes:
+      - name: configs
+        configMap: { name: master-configs }
+      - name: secret-volume
+        secret: { secretName: hy2-files }
+
+---
+# 9️⃣ Socks5 部署
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proxy-socks5
+  namespace: my-proxy
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: proxy-socks5 } }
+  template:
+    metadata:
+      labels: { app: proxy-socks5 }
+      annotations: { sidecar.istio.io/inject: "false" }
+    spec:
+      containers:
+      - name: proxy-container
+        image: ghcr.io/sagernet/sing-box:v1.13.3
+        command: ["sing-box", "run", "-c", "/etc/xray/config.json"]
+        ports: [{ containerPort: 10800, protocol: TCP }]
+        volumeMounts:
+        - name: config-volume
+          mountPath: /etc/xray/config.json
+          subPath: config-socks5.json
+      volumes:
+      - name: config-volume
+        configMap: { name: master-configs }
+
+---
+# 🔟 网络暴露与路由 (Services & APIRule)
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-direct-svc
+  namespace: my-proxy
+spec:
+  selector: { app: proxy-web-direct }
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8080
+---
+apiVersion: gateway.kyma-project.io/v2alpha1
+kind: APIRule
+metadata:
+  name: master-apirule
+  namespace: my-proxy
+spec:
+  gateway: kyma-system/kyma-gateway
+  hosts: 
+    - YOUR_KYMA_DOMAIN
+  service:
+    name: web-direct-svc
+    port: 80
+  rules:
+    - path: /
+      methods: ["GET", "POST", "PUT", "HEAD", "OPTIONS", "CONNECT", "PATCH", "TRACE", "DELETE"]
+      noAuth: true
+    - path: /{**}
+      methods: ["GET", "POST", "PUT", "HEAD", "OPTIONS", "CONNECT", "PATCH", "TRACE", "DELETE"]
+      noAuth: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hy2-service
+  namespace: my-proxy
+  annotations: { service.beta.kubernetes.io/aws-load-balancer-type: "nlb" }
+spec:
+  type: LoadBalancer
+  selector: { app: proxy-hy2 }
+  ports:
+  - name: hy2-udp-443
+    protocol: UDP
+    port: 443
+    targetPort: 10086
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tuic-service
+  namespace: my-proxy
+  annotations: { service.beta.kubernetes.io/aws-load-balancer-type: "nlb" }
+spec:
+  type: LoadBalancer
+  selector: { app: proxy-tuic }
+  ports:
+  - name: tuic-udp-8443
+    protocol: UDP
+    port: 8443
+    targetPort: 8443
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: socks5-service
+  namespace: my-proxy
+  annotations: { service.beta.kubernetes.io/aws-load-balancer-type: "nlb" }
+spec:
+  type: LoadBalancer
+  selector: { app: proxy-socks5 }
+  ports:
+  - name: socks5-tcp
+    protocol: TCP
+    port: 1080
+    targetPort: 10800
