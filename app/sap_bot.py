@@ -23,7 +23,6 @@ async def run_full_flow(logger):
             ]
         )
         context = await browser.new_context(viewport={'width': 1920, 'height': 1080})
-        # 统一默认超时为 45 秒，拒绝无意义的死等
         context.set_default_timeout(45000)
         page = await context.new_page()
         
@@ -34,18 +33,6 @@ async def run_full_flow(logger):
             await logger.broadcast("🌐 正在直接访问 SAP BTP Trial Subaccount...")
             await page.goto("https://cockpit.hanatrial.ondemand.com/trial/#/globalaccount/trial/subaccount/trial", wait_until="domcontentloaded")
             
-            try:
-                await logger.broadcast("🛡️ 正在进行前置路障排查...")
-                bypass_btn = page.locator('text="仍然继续", text="Continue anyway", text="仍要继续", button:has-text("继续")').first
-                if await bypass_btn.is_visible(timeout=8000):
-                    await logger.broadcast("⚠️ 遭遇 SAP 的『浏览器不受支持』拦截墙！正在一拳踹开...")
-                    await bypass_btn.click(force=True)
-                    await asyncio.sleep(4) 
-                else:
-                    await logger.broadcast("✅ 前方道路畅通，未见拦截墙。")
-            except Exception:
-                pass
-
             await logger.broadcast("⏳ 等待 SAP 登录网关响应...")
             await page.wait_for_selector("input[name='j_username'], input[type='email']", timeout=30000)
             
@@ -66,8 +53,21 @@ async def run_full_flow(logger):
             
             await logger.broadcast("⏳ 正在等待进入 Subaccount 控制台 (跨域认证中，预计 10-20 秒)...")
             
-            # 🌟 核心修复 1：绝对不用 networkidle，直接等 8 秒让它自动重定向完
-            await asyncio.sleep(8)
+            # 🌟 核心修正：跨域重定向需要时间，先等一会再进行排查
+            await asyncio.sleep(12)
+            
+            # 🌟 霸王硬上弓：登录后的拦截墙排查 (位置移动到了这里！)
+            try:
+                await logger.broadcast("🛡️ 正在进行登录后的路障排查...")
+                bypass_btn = page.locator('text="仍然继续", text="Continue anyway", text="仍要继续", button:has-text("继续")').first
+                if await bypass_btn.is_visible(timeout=8000):
+                    await logger.broadcast("⚠️ 遭遇 SAP 的『浏览器不受支持』拦截墙！正在一拳踹开...")
+                    await bypass_btn.click(force=True)
+                    await asyncio.sleep(6) 
+                else:
+                    await logger.broadcast("✅ 前方道路畅通，未见浏览器拦截墙。")
+            except Exception:
+                pass
             
             # 弹窗清理逻辑
             try:
@@ -83,7 +83,6 @@ async def run_full_flow(logger):
                 pass
 
             await logger.broadcast("🔍 正在扫描 Kyma Environment 模块...")
-            # 🌟 核心修复 2：如果 45 秒还没看到 Kyma，立刻引发异常，逼它截图发 TG！
             await page.wait_for_selector('text="Kyma Environment", text="kyma"', timeout=45000)
             await logger.broadcast("✅ 成功突围！已进入 Kyma 管理界面！")
 
@@ -122,7 +121,7 @@ async def run_full_flow(logger):
                     while True:
                         if await page.locator('button:has-text("Enable Kyma")').is_visible():
                             break
-                        if wait_del > 18: # 超过3分钟强制引爆
+                        if wait_del > 18:
                             raise Exception("等待删除 Kyma 超时 (超过3分钟)，强制坠机！")
                         await asyncio.sleep(10)
                         wait_del += 1
@@ -141,7 +140,7 @@ async def run_full_flow(logger):
                         await logger.broadcast(f"🎉 历时 {wait_minutes} 分钟，全新 Kyma 集群已成功变绿！")
                         break
                     
-                    if wait_minutes > 25: # 超过25分钟强制引爆
+                    if wait_minutes > 25:
                         raise Exception(f"等待创建 Kyma 超时 (已等待 {wait_minutes} 分钟)，强制坠机！")
                         
                     await logger.broadcast(f"   ... 第 {wait_minutes} 分钟，当前状态: Processing，请保持耐心。")
