@@ -14,17 +14,17 @@ async def run_full_flow(logger):
         return
 
     async with async_playwright() as p:
-        # 🌟 核心修复：必须加回 Docker 容器专用的保命参数，否则会导致浏览器进程死锁！
         browser = await p.chromium.launch(
             headless=True,
             args=[
-                '--no-sandbox',             # 突破 PaaS 容器沙盒限制
-                '--disable-dev-shm-usage',  # 突破 Docker 默认 64M 共享内存限制
+                '--no-sandbox',             
+                '--disable-dev-shm-usage',  
                 '--disable-gpu'
             ]
         )
         context = await browser.new_context(viewport={'width': 1920, 'height': 1080})
-        context.set_default_timeout(60000)
+        # 统一默认超时为 45 秒，拒绝无意义的死等
+        context.set_default_timeout(45000)
         page = await context.new_page()
         
         try:
@@ -32,9 +32,8 @@ async def run_full_flow(logger):
             # 第一阶段：登录 SAP
             # ==========================================
             await logger.broadcast("🌐 正在直接访问 SAP BTP Trial Subaccount...")
-            await page.goto("https://cockpit.hanatrial.ondemand.com/trial/#/globalaccount/trial/subaccount/trial", wait_until="domcontentloaded", timeout=90000)
+            await page.goto("https://cockpit.hanatrial.ondemand.com/trial/#/globalaccount/trial/subaccount/trial", wait_until="domcontentloaded")
             
-            # 🌟 霸王硬上弓！专门对付“浏览器不受支持”页面
             try:
                 await logger.broadcast("🛡️ 正在进行前置路障排查...")
                 bypass_btn = page.locator('text="仍然继续", text="Continue anyway", text="仍要继续", button:has-text("继续")').first
@@ -65,14 +64,16 @@ async def run_full_flow(logger):
             await page.locator("input[name='j_password'], input[type='password']").fill(SAP_PASS)
             await page.locator("button#logOnFormSubmit, button[type='submit']").click()
             
-            await logger.broadcast("⏳ 正在等待进入 Subaccount 控制台 (初次渲染较慢)...")
+            await logger.broadcast("⏳ 正在等待进入 Subaccount 控制台 (跨域认证中，预计 10-20 秒)...")
+            
+            # 🌟 核心修复 1：绝对不用 networkidle，直接等 8 秒让它自动重定向完
+            await asyncio.sleep(8)
             
             # 弹窗清理逻辑
             try:
-                await page.wait_for_load_state("networkidle")
                 ok_btn = page.locator("button:has-text('OK'), ui5-button:has-text('OK'), button:has-text('Accept All')").first
                 if await ok_btn.is_visible(timeout=5000):
-                    await logger.broadcast("🧹 发现隐私协议弹窗，正在自动清理...")
+                    await logger.broadcast("🧹 发现隐私协议/升级弹窗，正在自动清理...")
                     checkbox = page.locator("input[type='checkbox']").first
                     if await checkbox.is_visible(): 
                         await checkbox.check()
@@ -81,7 +82,9 @@ async def run_full_flow(logger):
             except Exception:
                 pass
 
-            await page.wait_for_selector('text="Kyma Environment", text="kyma"', timeout=90000)
+            await logger.broadcast("🔍 正在扫描 Kyma Environment 模块...")
+            # 🌟 核心修复 2：如果 45 秒还没看到 Kyma，立刻引发异常，逼它截图发 TG！
+            await page.wait_for_selector('text="Kyma Environment", text="kyma"', timeout=45000)
             await logger.broadcast("✅ 成功突围！已进入 Kyma 管理界面！")
 
             # ==========================================
@@ -115,10 +118,14 @@ async def run_full_flow(logger):
                         await confirm_btn.click()
                     await logger.broadcast("🗑️ 已下发删除指令，正在等待集群彻底销毁 (预计 1-3 分钟)...")
                     
+                    wait_del = 0
                     while True:
                         if await page.locator('button:has-text("Enable Kyma")').is_visible():
                             break
+                        if wait_del > 18: # 超过3分钟强制引爆
+                            raise Exception("等待删除 Kyma 超时 (超过3分钟)，强制坠机！")
                         await asyncio.sleep(10)
+                        wait_del += 1
                 
                 await logger.broadcast("✨ 旧实例已销毁，正在拉起全新 Kyma 集群...")
                 await page.locator('button:has-text("Enable Kyma")').click()
@@ -133,6 +140,10 @@ async def run_full_flow(logger):
                     if "Created" in status_text or "Enabled" in status_text:
                         await logger.broadcast(f"🎉 历时 {wait_minutes} 分钟，全新 Kyma 集群已成功变绿！")
                         break
+                    
+                    if wait_minutes > 25: # 超过25分钟强制引爆
+                        raise Exception(f"等待创建 Kyma 超时 (已等待 {wait_minutes} 分钟)，强制坠机！")
+                        
                     await logger.broadcast(f"   ... 第 {wait_minutes} 分钟，当前状态: Processing，请保持耐心。")
 
             # ==========================================
