@@ -22,7 +22,6 @@ async def run_full_flow(logger):
                 '--disable-gpu'
             ]
         )
-        # 强制指定英文 locale，尽量规范 SAP 的输出，但下方代码已做双语兼容
         context = await browser.new_context(viewport={'width': 1920, 'height': 1080}, locale='en-US')
         context.set_default_timeout(45000)
         page = await context.new_page()
@@ -32,7 +31,6 @@ async def run_full_flow(logger):
             # 第一阶段：登录 SAP
             # ==========================================
             await logger.broadcast("🌐 正在访问 SAP BTP 主页...")
-            # 🌟 修复 1：不再强行跳转底层链接，老老实实从主页进
             await page.goto("https://cockpit.hanatrial.ondemand.com/trial/#/home/trial", wait_until="domcontentloaded")
             
             await logger.broadcast("⏳ 等待 SAP 登录网关...")
@@ -54,51 +52,70 @@ async def run_full_flow(logger):
             await page.locator("button#logOnFormSubmit, button[type='submit']").click()
             
             # ==========================================
-            # 🌟 修复 2：登录后的“主动雷达”，专门击碎拦截墙
+            # 🌟 修复核心：开启 90 秒无敌状态机，见招拆招！
             # ==========================================
-            await logger.broadcast("📡 开启主动雷达，监控鉴权跳转与浏览器拦截墙...")
-            for _ in range(30):
+            await logger.broadcast("📡 开启自适应状态机，智能导航至子账户 (最高允许 90 秒)...")
+            
+            target_reached = False
+            for _ in range(90): 
+                # 状态 1：拦截墙
                 try:
-                    # 兼容中英文的“仍然继续”按钮
-                    bypass_btn = page.locator('text="仍然继续", text="Continue anyway", text="仍要继续"').first
-                    if await bypass_btn.is_visible():
-                        await logger.broadcast("⚠️ 发现『浏览器不受支持』拦截墙！正在一拳击碎...")
-                        await bypass_btn.click(force=True)
+                    wall_btn = page.locator('text="仍然继续", text="Continue anyway", text="仍要继续"').first
+                    if await wall_btn.is_visible():
+                        await logger.broadcast("⚠️ 击碎『浏览器不受支持』拦截墙...")
+                        await wall_btn.click(force=True)
+                        await asyncio.sleep(3) # 给跳转留缓冲
+                except: pass
+
+                # 状态 2：欢迎页按钮 (你截图里指出的关键缺失)
+                try:
+                    home_btn = page.locator('text="转到您的试用账户", text="Go To Your Trial Account", text="Enter Your Trial Account"').first
+                    if await home_btn.is_visible():
+                        await logger.broadcast("👉 发现欢迎页，正在点击『转到您的试用账户』...")
+                        await home_btn.click(force=True)
                         await asyncio.sleep(3)
                 except: pass
 
+                # 状态 3：弹窗协议
                 try:
-                    # 如果看到“账户浏览器”或“Account Explorer”，说明安全过关！
-                    if await page.locator('text="账户浏览器", text="Account Explorer"').first.is_visible():
+                    ok_btn = page.locator("button:has-text('OK'), ui5-button:has-text('OK'), button:has-text('Accept All')").first
+                    if await ok_btn.is_visible():
+                        checkbox = page.locator("input[type='checkbox']").first
+                        if await checkbox.is_visible(): 
+                            await checkbox.check()
+                        await ok_btn.click(force=True)
+                        await asyncio.sleep(2) 
+                except: pass
+
+                # 状态 4：成功判定 (看到子账户或者直接看到 Kyma，就说明导航结束！)
+                try:
+                    if await page.locator('text="SG-AZ", text="Kyma Environment", text="Kyma 环境"').first.is_visible():
+                        await logger.broadcast("✅ 导航成功，已到达目标账户层级！")
+                        target_reached = True
                         break
                 except: pass
-                await asyncio.sleep(1)
 
-            # ==========================================
-            # 🌟 修复 3：模拟真人操作流转 (账户浏览器 -> 子账户)
-            # ==========================================
-            await logger.broadcast("🔍 正在等待进入全局账户浏览器 (Account Explorer)...")
-            await page.wait_for_selector('text="账户浏览器", text="Account Explorer"', timeout=45000)
-            await asyncio.sleep(3) # 给予卡片渲染时间
+                await asyncio.sleep(1) # 每秒扫描一次
 
-            await logger.broadcast("🖱️ 正在寻找并进入子账户 (SG-AZ)...")
-            # 优先点击 SG-AZ，如果没有则点击第一个看着像子账户的链接
-            subaccount_card = page.locator('text="SG-AZ"').first
-            if not await subaccount_card.is_visible():
-                subaccount_card = page.locator('text="trial"').nth(1)
-            
-            await subaccount_card.click(force=True)
-            
+            if not target_reached:
+                raise Exception("状态机导航超时，未能在 90 秒内到达账户浏览器！")
+
             # ==========================================
             # 第三阶段：进入 Kyma 并判断状态
             # ==========================================
+            await logger.broadcast("🖱️ 正在寻找并进入子账户 (SG-AZ)...")
+            # 有可能之前跑过脚本，SAP 记住了路径，直接在 Kyma 页面了
+            if not await page.locator('text="Kyma Environment", text="Kyma 环境"').first.is_visible():
+                subaccount_card = page.locator('text="SG-AZ"').first
+                if not await subaccount_card.is_visible():
+                    subaccount_card = page.locator('text="trial"').nth(1)
+                await subaccount_card.click(force=True)
+            
             await logger.broadcast("🔍 正在扫描 Kyma 环境配置区...")
-            # 兼容中英文的 Kyma 模块标题
             await page.wait_for_selector('text="Kyma Environment", text="Kyma 环境"', timeout=45000)
             await logger.broadcast("✅ 成功突围！已进入 SG-AZ 子账户的 Kyma 管理界面！")
 
             page_text = await page.content()
-            # 🌟 修复 4：兼容中英文的过期时间正则表达式
             expire_match = re.search(r"(?:expires in|剩余)\s*(\d+)\s*(?:days|天)", page_text, re.IGNORECASE)
             
             needs_rebuild = True
@@ -117,7 +134,6 @@ async def run_full_flow(logger):
             if needs_rebuild:
                 await logger.broadcast("💣 触发重置协议，准备销毁并重建 Kyma 实例...")
                 
-                # 兼容中英文删除按钮
                 delete_btn = page.locator('button[aria-label="Delete Kyma Environment"], button[title="删除 Kyma 环境"], button:has-text("Delete"), button:has-text("删除")').first
                 if await delete_btn.is_visible():
                     await delete_btn.click()
@@ -137,7 +153,6 @@ async def run_full_flow(logger):
                         wait_del += 1
                 
                 await logger.broadcast("✨ 旧实例已销毁，正在拉起全新 Kyma 集群...")
-                # 点击中英文启用按钮
                 await page.locator('button:has-text("Enable Kyma"), button:has-text("启用 Kyma")').first.click()
                 
                 wait_minutes = 0
