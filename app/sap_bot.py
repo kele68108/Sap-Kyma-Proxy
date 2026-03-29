@@ -252,31 +252,35 @@ async def run_full_flow(logger):
                     await logger.broadcast(f"   ... 第 {wait_minutes} 分钟，正在分配集群，请保持耐心。")
 
             # ==========================================
-            # 🌟 第五阶段：提取灵魂 (API 级底层窃取)
+            # 🌟 第五阶段：提取灵魂 (页面直读法)
             # ==========================================
             await logger.broadcast("📥 正在向 SAP 申请 Kubernetes 集群管理凭证...")
-            await asyncio.sleep(5) 
+            await asyncio.sleep(4) 
             
             kube_locator = page.locator("a[href*='kubeconfig']").first
             
             if await kube_locator.count() > 0:
                 kube_url = await kube_locator.get_attribute("href")
-                await logger.broadcast(f"🔗 成功截获凭证底层直链 API，准备强行拉取...")
+                await logger.broadcast("🔗 截获凭证直链，正在通过主页面引擎强制跳转读取...")
                 
-                req_response = await context.request.get(kube_url)
-                if req_response.ok:
-                    yaml_content = await req_response.text()
+                # 杀手锏：直接用当前已完全验证的页面跳转，完美继承所有 Token 和 Session，无视跨域！
+                await page.goto(kube_url, wait_until="domcontentloaded", timeout=45000)
+                await asyncio.sleep(3)
+                
+                # 提取页面上的纯文本内容 (浏览器会直接将 YAML 文本展示在页面上)
+                yaml_content = await page.inner_text("body")
+                
+                # 增加一道保险：校验抓取到的内容是不是真正的 Kubeconfig 格式
+                if "apiVersion: v1" in yaml_content and "clusters:" in yaml_content:
                     with open("kubeconfig.yaml", "w", encoding="utf-8") as f:
                         f.write(yaml_content)
-                    await logger.broadcast("✅ 凭证文件提取成功并已写入本地！")
+                    await logger.broadcast("✅ 凭证文件物理抓取成功并已安全写入本地！")
                 else:
-                    raise Exception(f"底层 API 拉取失败，HTTP 状态码: {req_response.status}")
+                    # 如果还是抓到了别的东西，把前 200 个字符打印出来看看到底是什么鬼
+                    await logger.broadcast(f"⚠️ 抓取内容格式异常，预览: {yaml_content[:200]}")
+                    raise Exception("提取到的内容不是合法的 YAML 凭证，疑似遭遇二次跨域重定向拦截！")
             else:
-                await logger.broadcast("⚠️ 未找到明文 API 直链，回退至模拟浏览器下载模式...")
-                async with page.expect_download() as download_info:
-                    await page.locator("text=/Kubeconfig/i").first.click(force=True)
-                download = await download_info.value
-                await download.save_as("kubeconfig.yaml")
+                raise Exception("页面上未找到 Kubeconfig 凭证提取链接！")
 
             await logger.broadcast("🚀 自动化浏览器任务圆满结束，即将移交 K8s 部署引擎！")
             await deployer.run_deploy(logger)
