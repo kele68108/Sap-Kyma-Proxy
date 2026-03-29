@@ -15,7 +15,7 @@ async def run_full_flow(logger):
 
     async with async_playwright() as p:
         # ==========================================
-        # 🛡️ 伪装核心：匹配 v130 内核与深度反检测
+        # 🛡️ 启动环境配置
         # ==========================================
         browser = await p.chromium.launch(
             headless=True,
@@ -34,11 +34,10 @@ async def run_full_flow(logger):
         )
         context.set_default_timeout(45000)
         
+        # 抹除自动化特征
         stealth_js = """
             Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
             window.navigator.chrome = { runtime: {} };
-            Object.defineProperty(navigator, 'languages', {get: () => ['zh-CN', 'zh', 'en']});
-            Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3]});
         """
         await context.add_init_script(stealth_js)
         
@@ -70,57 +69,54 @@ async def run_full_flow(logger):
             await page.locator("button#logOnFormSubmit, button[type='submit']").click()
             
             # ==========================================
-            # 🌟 修复核心：开启 90 秒无敌状态机，见招拆招！
+            # 🌟 第二阶段：全域 iframe 穿透状态机 (汲取 BAS 脚本灵感)
             # ==========================================
-            await logger.broadcast("📡 开启自适应状态机，智能导航至子账户 (最高允许 90 秒)...")
+            await logger.broadcast("📡 开启全域状态机，执行 iframe 穿透扫描 (最高 90 秒)...")
             
             target_reached = False
             for _ in range(90): 
-                # 状态 1：拦截墙 (终极穿甲弹)
-                try:
-                    # 关键修复 1：使用 .filter(state="visible") 彻底过滤掉不可见的幽灵元素
-                    wall_btn = page.locator('text="仍然继续", text="Continue anyway", text="仍要继续"').filter(state="visible").first
-                        
-                    if await wall_btn.is_visible():
-                        await logger.broadcast("⚠️ 发现可见的拦截墙，启动混合穿甲突围...")
-                        
-                        # 策略 A：使用 Playwright 的底层事件派发 (无视前端框架的 click 拦截)
-                        await wall_btn.dispatch_event('click')
-                        await asyncio.sleep(0.5)
-                        
-                        # 策略 B：原生 JS 强制点击自身及其父容器 (防止真正绑事件的是外层 div)
-                        await wall_btn.evaluate("""node => {
-                            if(node.click) node.click();
-                            if(node.parentElement && node.parentElement.click) node.parentElement.click();
-                        }""")
-                        
-                        # 关键修复 2：SAP 服务器跳转可能存在延迟，给足 6 秒缓冲，防止状态机死循环重发指令
-                        await logger.broadcast("⏳ 强制放行指令已下发，等待 SAP 路由跳转...")
-                        await asyncio.sleep(6) 
-                except Exception as e: 
-                    pass
+                # 获取当前所有框架 (主页面 + 嵌套 iframe)
+                frames_to_check = [page] + page.frames
+                
+                for frame in frames_to_check:
+                    # 状态 1：拦截墙 (穿透扫描)
+                    try:
+                        wall_btn = frame.locator('text="仍然继续", text="Continue anyway", text="仍要继续"').filter(state="visible").first
+                        if await wall_btn.is_visible(timeout=500):
+                            await logger.broadcast(f"⚠️ 发现拦截墙 (位于框架: {frame.name or '主页面'})，执行强制突破...")
+                            
+                            # 结合原生 JS 与 Playwright click 的双重保险
+                            await wall_btn.evaluate("""node => {
+                                if(node.click) node.click();
+                                if(node.parentElement && node.parentElement.click) node.parentElement.click();
+                            }""")
+                            await wall_btn.click(force=True)
+                            
+                            await logger.broadcast("⏳ 突破指令已下发，等待路由刷新...")
+                            await asyncio.sleep(5) 
+                    except: pass
 
-                # 状态 2：欢迎页按钮
-                try:
-                    home_btn = page.locator('text="转到您的试用账户", text="Go To Your Trial Account", text="Enter Your Trial Account"').filter(state="visible").first
-                    if await home_btn.is_visible():
-                        await logger.broadcast("👉 发现欢迎页，正在点击『转到您的试用账户』...")
-                        await home_btn.click(force=True)
-                        await asyncio.sleep(4)
-                except: pass
+                    # 状态 2：欢迎页按钮
+                    try:
+                        home_btn = frame.locator('text="转到您的试用账户", text="Go To Your Trial Account", text="Enter Your Trial Account"').filter(state="visible").first
+                        if await home_btn.is_visible(timeout=500):
+                            await logger.broadcast("👉 发现欢迎页，正在点击『转到您的试用账户』...")
+                            await home_btn.click(force=True)
+                            await asyncio.sleep(3)
+                    except: pass
 
-                # 状态 3：弹窗协议
-                try:
-                    ok_btn = page.locator("button:has-text('OK'), ui5-button:has-text('OK'), button:has-text('Accept All')").filter(state="visible").first
-                    if await ok_btn.is_visible():
-                        checkbox = page.locator("input[type='checkbox']").first
-                        if await checkbox.is_visible(): 
-                            await checkbox.check()
-                        await ok_btn.click(force=True)
-                        await asyncio.sleep(3) 
-                except: pass
+                    # 状态 3：弹窗协议
+                    try:
+                        ok_btn = frame.locator("button:has-text('OK'), ui5-button:has-text('OK'), button:has-text('Accept All')").filter(state="visible").first
+                        if await ok_btn.is_visible(timeout=500):
+                            checkbox = frame.locator("input[type='checkbox']").first
+                            if await checkbox.is_visible(): 
+                                await checkbox.check()
+                            await ok_btn.click(force=True)
+                            await asyncio.sleep(2) 
+                    except: pass
 
-                # 状态 4：成功判定
+                # 状态 4：成功判定 (全局扫描)
                 try:
                     if await page.locator('text="SG-AZ", text="Kyma Environment", text="Kyma 环境"').first.is_visible():
                         await logger.broadcast("✅ 导航成功，已到达目标账户层级！")
@@ -217,9 +213,6 @@ async def run_full_flow(logger):
             await deployer.run_deploy(logger)
 
         except Exception as e:
-            # ==========================================
-            # 🚑 异常捕获：神级除错系统 (截图 + TG)
-            # ==========================================
             current_url = page.url
             page_title = await page.title()
             error_msg = str(e)
@@ -235,7 +228,7 @@ async def run_full_flow(logger):
                 await page.screenshot(path=screenshot_path)
                 await logger.broadcast("📸 已成功截取案发现场快照。")
             except:
-                await logger.broadcast("⚠️ 截图失败，可能页面已销毁。")
+                pass
 
             tg_token = os.getenv("TG_BOT_TOKEN")
             tg_chat_id = os.getenv("TG_CHAT_ID")
@@ -245,12 +238,8 @@ async def run_full_flow(logger):
                 try:
                     caption = f"🚨 **SAP 自动化坠机警报**\n\n📍 **网址:** {current_url}\n🏷️ **标题:** {page_title}\n❌ **报错信息:**\n`{error_msg[:300]}...`"
                     caption_escaped = shlex.quote(caption) 
-                    
                     cmd = f'curl -s -X POST "https://api.telegram.org/bot{tg_token}/sendPhoto" -F chat_id="{tg_chat_id}" -F photo="@{screenshot_path}" -F parse_mode="Markdown" -F caption={caption_escaped}'
-                    
-                    process = await asyncio.create_subprocess_shell(
-                        cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-                    )
+                    process = await asyncio.create_subprocess_shell(cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
                     await process.communicate()
                 except Exception as tg_e:
                     await logger.broadcast(f"❌ TG 推送异常: {str(tg_e)}")
