@@ -72,17 +72,47 @@ async def run_full_flow(logger):
             await page.locator("button#logOnFormSubmit, button[type='submit']").click(force=True)
             
             # ==========================================
-            # 🌟 第二阶段：全域暴力状态机 (加入暴躁防死锁机制)
+            # 🌟 第二阶段：全域暴力状态机 (无视前端遮罩)
             # ==========================================
             await logger.broadcast("📡 开启全域暴力状态机，无视前端遮罩执行扫描 (最高 90 秒)...")
             
             target_reached = False
-            wall_retry_count = 0  # 防撞墙计数器
+            wall_retry_count = 0  
             
             for _ in range(90): 
                 frames_to_check = [page] + page.frames
                 
                 for frame in frames_to_check:
+                    
+                    # 💥 新增：全球多语言 Cookie 弹窗毁灭器 💥
+                    try:
+                        # 覆盖：通用ID + 通用Class + 中日英德法西意主流接受词汇
+                        cookie_btn = frame.locator(
+                            "#truste-consent-button, button[id*='accept' i], button[class*='accept' i], "
+                            "text=/OK|Accept All|Accept|Agree|Allow|同意|接受|すべて|Akzeptieren|Accepter|Aceptar|Accetta/i"
+                        ).filter(state="visible").first
+                        
+                        if await cookie_btn.count() > 0:
+                            await logger.broadcast("🍪 发现跨区 Geo-IP Cookie 弹窗，执行多语言自动放行...")
+                            checkbox = frame.locator("input[type='checkbox']").first
+                            if await checkbox.count() > 0: 
+                                await checkbox.check(force=True)
+                            
+                            await cookie_btn.evaluate("node => { if(node.click) node.click(); }")
+                            try: await cookie_btn.click(force=True, timeout=1000)
+                            except: pass
+                            await asyncio.sleep(2) 
+                    except: pass
+                    
+                    # 💥 终极物理除障：直接从 DOM 树中强行超度 Cookie 遮罩层 (无视语言)
+                    try:
+                        await frame.evaluate("""() => {
+                            const trash = document.querySelectorAll('[id*="truste-consent"], .trustarc-banner, [id*="cookie-banner"], [class*="cookie-overlay"], #trustarc-banner-overlay');
+                            trash.forEach(el => el.remove());
+                        }""")
+                    except: pass
+
+
                     # ---- 升级版：拦截墙穿甲器 ----
                     wall_detected = False
                     wall_btn = None
@@ -97,9 +127,8 @@ async def run_full_flow(logger):
 
                     if wall_detected and wall_btn:
                         wall_retry_count += 1
-                        # 💥 杀手锏：超过 5 次不报错直接原地爆炸，触发坠机截图
-                        if wall_retry_count >= 5:
-                            raise Exception(f"🚨 连续 {wall_retry_count} 次强行点击拦截墙无响应！判定为 SAP 前端死锁或 UI 重构，主动强制坠机以便分析截图！")
+                        if wall_retry_count >= 10:
+                            raise Exception(f"🚨 连续 {wall_retry_count} 次强行点击拦截墙无响应！判定为 SAP 前端死锁，主动强制坠机！")
                             
                         await logger.broadcast(f"⚠️ 发现拦截墙代码 (第 {wall_retry_count} 次尝试)，正在执行原生穿甲点击...")
                         try:
@@ -139,17 +168,6 @@ async def run_full_flow(logger):
                             except: pass
                             await home_btn.click(force=True, timeout=1000)
                             await asyncio.sleep(3)
-                    except: pass
-
-                    # ---- 弹窗协议处理 ----
-                    try:
-                        ok_btn = frame.locator("text=/OK|Accept All/i").locator("visible=true").first
-                        if await ok_btn.count() > 0:
-                            checkbox = frame.locator("input[type='checkbox']").first
-                            if await checkbox.count() > 0: 
-                                await checkbox.check(force=True)
-                            await ok_btn.click(force=True)
-                            await asyncio.sleep(2) 
                     except: pass
 
                 # 成功判定
@@ -319,7 +337,6 @@ async def run_full_flow(logger):
 
             await logger.broadcast("🚀 自动化浏览器任务圆满结束，即将移交 K8s 部署引擎！")
             
-            # 💥 最关键的一行修改！将 page 对象传递给部署引擎！💥
             await deployer.run_deploy(logger, page)
 
         except Exception as e:
