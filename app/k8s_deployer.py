@@ -130,7 +130,7 @@ async def run_deploy(logger, page=None):
             if tg_bot_token and tg_chat_id:
                 await logger.broadcast("✈️ 正在推送最终部署结果至 Telegram...")
                 try:
-                    caption = f"🎉 **Sap Kyma Proxy 部署成功！**\n\n🎯 **节点订阅台地址:**\n`{kyma_url}`\n\n*(如遇 502 请耐心等待 1-2 分钟，Pod 正在后台拉起)*"
+                    caption = f"🎉 **Sap Kyma Proxy 部署成功！**\n\n🔗 **节点订阅台地址:**\n`{kyma_url}`\n\n*(如遇 502 请耐心等待 1-2 分钟，Pod 正在后台拉起)*"
                     caption_escaped = shlex.quote(caption)
                     cmd_tg = f'curl -s -X POST "https://api.telegram.org/bot{tg_bot_token}/sendMessage" -d chat_id="{tg_chat_id}" -d text={caption_escaped} -d parse_mode="Markdown"'
                     push_proc = await asyncio.create_subprocess_shell(cmd_tg)
