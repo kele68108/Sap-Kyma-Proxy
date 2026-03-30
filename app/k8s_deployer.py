@@ -4,7 +4,6 @@ import asyncio
 import uuid
 import shlex
 
-# 关键：新增了 page 参数，用于接收从 sap_bot 传过来的已登录浏览器上下文
 async def run_deploy(logger, page=None):
     await logger.broadcast("⚙️ 部署引擎已接管，正在解析集群凭证...")
     
@@ -66,7 +65,6 @@ async def run_deploy(logger, page=None):
     # 3. 通过 Kubectl 执行物理部署
     await logger.broadcast("🚀 正在向 Kubernetes 集群下发 All in One 矩阵配置...")
     try:
-        # 杀手锏 1：注入 BROWSER=echo，防止 xdg-open 报错并强制其将 URL 打印到终端
         custom_env = os.environ.copy()
         custom_env["BROWSER"] = "echo"
 
@@ -82,7 +80,6 @@ async def run_deploy(logger, page=None):
         output_log = []
         error_log = []
 
-        # 杀手锏 2：开一个异步协程，实时读取 Kubectl 的控制台输出
         async def handle_stream(stream, is_stderr=False):
             while True:
                 line = await stream.readline()
@@ -94,23 +91,19 @@ async def run_deploy(logger, page=None):
                 else:
                     output_log.append(line_str)
 
-                # 杀手锏 3：一旦发现 OIDC 授权服务器启动，立马派 Playwright 过去"串门"
+                # 拦截 OIDC 授权
                 if "http://localhost:" in line_str and page:
-                    # 匹配 localhost 地址 (包容端口和可能的路径)
                     match = re.search(r'(http://localhost:\d+(?:/[^\s]*)?)', line_str)
                     if match:
                         login_url = match.group(1)
                         await logger.broadcast(f"🛂 拦截到 OIDC 唤醒请求: {login_url}")
                         await logger.broadcast("🕵️‍♂️ 正在调用底层 Playwright 携带全局 Cookie 强行注入授权...")
                         try:
-                            # 带着 SAP 登录状态去访问，直接秒过验证！
                             await page.goto(login_url, timeout=30000)
                             await logger.broadcast("✅ OIDC 本地鉴权闭环完成！")
                         except Exception as e:
-                            # 这里通常即使超时也说明请求发过去了，可以直接忽略报错
                             await logger.broadcast(f"⚠️ 鉴权访问提示 (通常可忽略): {str(e)}")
 
-        # 并发读取 stdout 和 stderr
         await asyncio.gather(
             handle_stream(process.stdout, is_stderr=False),
             handle_stream(process.stderr, is_stderr=True)
@@ -122,17 +115,22 @@ async def run_deploy(logger, page=None):
         if process.returncode == 0:
             await logger.broadcast("✅ 集群配置下发成功！所有 Pod 已进入拉起状态。")
             
-            # 格式化面板 URL（根据你的 Nginx/Argo 路由配置，这里默认拼接）
-            final_url = f"https://{argo_domain}{sub_token}"
+            # ==========================================
+            # 最终修正：安全处理斜杠，仅输出 Kyma 直连面板地址
+            # ==========================================
+            clean_kyma = new_kyma_domain.strip('/')
+            clean_sub = sub_token.strip('/')
             
-            await logger.broadcast(f"🎉 部署圆满完成！Argo 隧道正在疯狂建联中...")
-            await logger.broadcast(f"🔗 你的专属节点订阅面板地址: {final_url}")
+            kyma_url = f"https://{clean_kyma}/{clean_sub}/"
+            
+            await logger.broadcast(f"🎉 部署圆满完成！底层应用正在初始化...")
+            await logger.broadcast(f"🔗 你的专属节点订阅面板地址: {kyma_url}")
             
             # 发送胜利的 TG 通知
             if tg_bot_token and tg_chat_id:
                 await logger.broadcast("✈️ 正在推送最终部署结果至 Telegram...")
                 try:
-                    caption = f"🎉 **SAP Kyma 节点部署成功！**\n\n🔗 **订阅面板地址:**\n`{final_url}`\n\n*(如遇 502 请耐心等待 1-2 分钟，Argo 隧道正在后台初始化)*"
+                    caption = f"🎉 **Sap Kyma Proxy 部署成功！**\n\n🎯 **节点订阅台面板地址:**\n`{kyma_url}`\n\n*(如遇 502 请耐心等待 1-2 分钟，Pod 正在后台拉起)*"
                     caption_escaped = shlex.quote(caption)
                     cmd_tg = f'curl -s -X POST "https://api.telegram.org/bot{tg_bot_token}/sendMessage" -d chat_id="{tg_chat_id}" -d text={caption_escaped} -d parse_mode="Markdown"'
                     push_proc = await asyncio.create_subprocess_shell(cmd_tg)
@@ -140,7 +138,7 @@ async def run_deploy(logger, page=None):
                 except Exception as e:
                     await logger.broadcast(f"⚠️ TG 推送小插曲: {str(e)}")
             
-            await logger.broadcast("🏁 【全流程结束】Sap Kyma Proxy 自动化流水线已安全退出。尽情享受你的节点吧！")
+            await logger.broadcast("🏁 【全流程结束】Sap Kyma Proxy 自动化流水线已安全退出。")
         else:
             stderr_text = "\n".join(error_log)
             await logger.broadcast(f"❌ Kubectl 部署失败:\n{stderr_text}")
