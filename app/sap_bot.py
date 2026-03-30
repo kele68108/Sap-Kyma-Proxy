@@ -81,20 +81,54 @@ async def run_full_flow(logger):
                 frames_to_check = [page] + page.frames
                 
                 for frame in frames_to_check:
+                    # ---- 升级版：拦截墙穿甲器 ----
                     try:
-                        wall_btn = frame.locator("text=/仍然继续|Continue anyway|仍要继续/i").first
+                        # 策略1：优先寻找具有交互属性的按钮/链接
+                        wall_btn = frame.locator('a, button').filter(has_text=re.compile(r"仍然继续|Continue anyway|仍要继续", re.I)).first
+                        
+                        # 策略2：如果找不到标签，找 DOM 树最深层的文本节点 (避免抓到外层 Body)
+                        if await wall_btn.count() == 0:
+                            wall_btn = frame.locator('text=/仍然继续|Continue anyway|仍要继续/i').last
+                            
                         if await wall_btn.count() > 0:
                             await logger.broadcast(f"⚠️ 发现拦截墙代码，正在执行原生穿甲点击...")
+                            
+                            # 终极 JS 注入：剥除隐身衣，提取直链跳转
                             await wall_btn.evaluate("""node => {
+                                // 1. 强行解除自身及父级的所有前端限制 (透明度、禁用等)
+                                let curr = node;
+                                while(curr && curr !== document.body) {
+                                    curr.style.pointerEvents = 'auto';
+                                    curr.style.display = 'block';
+                                    curr.style.opacity = '1';
+                                    curr.removeAttribute('disabled');
+                                    curr = curr.parentElement;
+                                }
+                                
+                                // 2. 杀手锏：如果它本身或父级是个超链接，直接读 href 跳转！(最强物理突围，无视一切事件拦截)
+                                curr = node;
+                                while(curr && curr !== document.body) {
+                                    if (curr.tagName === 'A' && curr.href && curr.href !== 'javascript:void(0)') {
+                                        window.location.href = curr.href;
+                                        return; 
+                                    }
+                                    curr = curr.parentElement;
+                                }
+                                
+                                // 3. 如果只是个普通按钮，派发原生鼠标物理事件
+                                const evt = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
+                                node.dispatchEvent(evt);
                                 if(node.click) node.click();
-                                if(node.parentElement && node.parentElement.click) node.parentElement.click();
-                                if(node.parentNode && node.parentNode.click) node.parentNode.click();
                             }""")
-                            try: await wall_btn.click(force=True, timeout=1000)
+                            
+                            # Playwright 强制点击双保险
+                            try: await wall_btn.click(force=True, timeout=2000)
                             except: pass
-                            await asyncio.sleep(4) 
+                            
+                            await asyncio.sleep(5) # 给服务器重定向留足 5 秒缓冲
                     except: pass
 
+                    # ---- 欢迎页点击器 ----
                     try:
                         home_btn = frame.locator("text=/转到您的试用账户|Go To Your Trial Account|Enter Your Trial Account/i").first
                         if await home_btn.count() > 0:
@@ -105,6 +139,7 @@ async def run_full_flow(logger):
                             await asyncio.sleep(3)
                     except: pass
 
+                    # ---- 弹窗协议处理 ----
                     try:
                         ok_btn = frame.locator("text=/OK|Accept All/i").locator("visible=true").first
                         if await ok_btn.count() > 0:
@@ -115,6 +150,7 @@ async def run_full_flow(logger):
                             await asyncio.sleep(2) 
                     except: pass
 
+                # 成功判定
                 try:
                     target_locator = page.locator(f"text=/{SAP_SUBACCOUNT}|Kyma Environment|Kyma 环境/i").first
                     if await target_locator.count() > 0:
