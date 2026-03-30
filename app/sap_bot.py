@@ -72,29 +72,65 @@ async def run_full_flow(logger):
             await page.locator("button#logOnFormSubmit, button[type='submit']").click(force=True)
             
             # ==========================================
-            # 🌟 第二阶段：全域暴力状态机 (无视前端遮罩)
+            # 🌟 第二阶段：全域暴力状态机 (加入暴躁防死锁机制)
             # ==========================================
             await logger.broadcast("📡 开启全域暴力状态机，无视前端遮罩执行扫描 (最高 90 秒)...")
             
             target_reached = False
+            wall_retry_count = 0  # 防撞墙计数器
+            
             for _ in range(90): 
                 frames_to_check = [page] + page.frames
                 
                 for frame in frames_to_check:
+                    # ---- 升级版：拦截墙穿甲器 ----
+                    wall_detected = False
+                    wall_btn = None
                     try:
-                        wall_btn = frame.locator("text=/仍然继续|Continue anyway|仍要继续/i").first
+                        wall_btn = frame.locator('a, button').filter(has_text=re.compile(r"仍然继续|Continue anyway|仍要继续", re.I)).first
+                        if await wall_btn.count() == 0:
+                            wall_btn = frame.locator('text=/仍然继续|Continue anyway|仍要继续/i').last
+                            
                         if await wall_btn.count() > 0:
-                            await logger.broadcast(f"⚠️ 发现拦截墙代码，正在执行原生穿甲点击...")
-                            await wall_btn.evaluate("""node => {
-                                if(node.click) node.click();
-                                if(node.parentElement && node.parentElement.click) node.parentElement.click();
-                                if(node.parentNode && node.parentNode.click) node.parentNode.click();
-                            }""")
-                            try: await wall_btn.click(force=True, timeout=1000)
-                            except: pass
-                            await asyncio.sleep(4) 
+                            wall_detected = True
                     except: pass
 
+                    if wall_detected and wall_btn:
+                        wall_retry_count += 1
+                        # 💥 杀手锏：超过 5 次不报错直接原地爆炸，触发坠机截图
+                        if wall_retry_count >= 5:
+                            raise Exception(f"🚨 连续 {wall_retry_count} 次强行点击拦截墙无响应！判定为 SAP 前端死锁或 UI 重构，主动强制坠机以便分析截图！")
+                            
+                        await logger.broadcast(f"⚠️ 发现拦截墙代码 (第 {wall_retry_count} 次尝试)，正在执行原生穿甲点击...")
+                        try:
+                            await wall_btn.evaluate("""node => {
+                                let curr = node;
+                                while(curr && curr !== document.body) {
+                                    curr.style.pointerEvents = 'auto';
+                                    curr.style.display = 'block';
+                                    curr.style.opacity = '1';
+                                    curr.removeAttribute('disabled');
+                                    curr = curr.parentElement;
+                                }
+                                curr = node;
+                                while(curr && curr !== document.body) {
+                                    if (curr.tagName === 'A' && curr.href && curr.href !== 'javascript:void(0)') {
+                                        window.location.href = curr.href;
+                                        return; 
+                                    }
+                                    curr = curr.parentElement;
+                                }
+                                const evt = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
+                                node.dispatchEvent(evt);
+                                if(node.click) node.click();
+                            }""")
+                            
+                            try: await wall_btn.click(force=True, timeout=2000)
+                            except: pass
+                        except: pass
+                        await asyncio.sleep(5) 
+
+                    # ---- 欢迎页点击器 ----
                     try:
                         home_btn = frame.locator("text=/转到您的试用账户|Go To Your Trial Account|Enter Your Trial Account/i").first
                         if await home_btn.count() > 0:
@@ -105,6 +141,7 @@ async def run_full_flow(logger):
                             await asyncio.sleep(3)
                     except: pass
 
+                    # ---- 弹窗协议处理 ----
                     try:
                         ok_btn = frame.locator("text=/OK|Accept All/i").locator("visible=true").first
                         if await ok_btn.count() > 0:
@@ -115,6 +152,7 @@ async def run_full_flow(logger):
                             await asyncio.sleep(2) 
                     except: pass
 
+                # 成功判定
                 try:
                     target_locator = page.locator(f"text=/{SAP_SUBACCOUNT}|Kyma Environment|Kyma 环境/i").first
                     if await target_locator.count() > 0:
