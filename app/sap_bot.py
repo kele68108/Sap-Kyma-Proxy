@@ -5,9 +5,6 @@ import shlex
 from playwright.async_api import async_playwright
 import app.k8s_deployer as deployer
 
-# ==========================================
-# 环境变量加载
-# ==========================================
 SAP_USER = os.getenv("SAP_USER")
 SAP_PASS = os.getenv("SAP_PASS")
 SAP_SUBACCOUNT = os.getenv("SAP_SUBACCOUNT", "SG-AZ") 
@@ -47,18 +44,16 @@ async def run_full_flow(logger):
         
         try:
             # ==========================================
-            # 第一阶段：登录 SAP (修复 SSO 重定向挂起问题)
+            # 第一阶段：登录 SAP
             # ==========================================
             await logger.broadcast("🌐 正在访问 SAP BTP 主页...")
             
             try:
-                # 关键修复：降低等待级别为 commit，并且即使抛出超时错误也拦截掉
                 await page.goto("https://cockpit.hanatrial.ondemand.com/trial/#/home/trial", wait_until="commit", timeout=45000)
             except Exception:
                 await logger.broadcast("⚠️ 页面路由可能因 SSO 延迟挂起，强制接管并探测登录入口...")
             
             await logger.broadcast("⏳ 等待 SAP 登录网关...")
-            # 把找输入框的超时时间拉长，给 SSO 充足的渲染时间
             await page.wait_for_selector("input[name='j_username'], input[type='email']", timeout=60000)
             
             await logger.broadcast(f"🔑 正在填写账号: {SAP_USER}")
@@ -251,7 +246,7 @@ async def run_full_flow(logger):
                         
                     await logger.broadcast(f"   ... 第 {wait_minutes} 分钟，正在分配集群，请保持耐心。")
 
-# ==========================================
+            # ==========================================
             # 🌟 第五阶段：提取灵魂 (物理下载拦截)
             # ==========================================
             await logger.broadcast("📥 正在向 SAP 申请 Kubernetes 集群管理凭证...")
@@ -271,13 +266,9 @@ async def run_full_flow(logger):
             
             if kube_url:
                 await logger.broadcast(f"🔗 成功精准截获 Kubeconfig 直链: {kube_url[:50]}...")
-                
                 try:
                     await logger.broadcast("📥 准备拦截浏览器的物理下载事件...")
-                    # 启动原生下载监听器
                     async with page.expect_download(timeout=45000) as download_info:
-                        # 杀手锏：通过原生 JS 修改 window.location 触发下载
-                        # 既不会引起 page.goto 的报错，又能完美继承当前页面的所有 Cookie 和 Auth 状态！
                         await page.evaluate(f"window.location.href = '{kube_url}'")
                     
                     download = await download_info.value
@@ -289,6 +280,8 @@ async def run_full_flow(logger):
                 raise Exception("页面上彻底未找到 Kubeconfig 凭证提取链接！")
 
             await logger.broadcast("🚀 自动化浏览器任务圆满结束，即将移交 K8s 部署引擎！")
+            
+            # 💥 最关键的一行修改！将 page 对象传递给部署引擎！💥
             await deployer.run_deploy(logger, page)
 
         except Exception as e:
