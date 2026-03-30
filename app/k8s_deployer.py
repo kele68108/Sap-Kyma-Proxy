@@ -99,7 +99,11 @@ async def run_deploy(logger, page=None):
                         await logger.broadcast(f"🛂 拦截到 OIDC 唤醒请求: {login_url}")
                         await logger.broadcast("🕵️‍♂️ 正在调用底层 Playwright 携带全局 Cookie 强行注入授权...")
                         try:
-                            await page.goto(login_url, timeout=30000)
+                            # 🌟 修复核心：开启新标签页，完美避开原页面因下载文件导致的假死状态！
+                            auth_page = await page.context.new_page()
+                            await auth_page.goto(login_url, timeout=30000)
+                            await asyncio.sleep(2)  # 留 2 秒让 OIDC 回调请求飞一会儿
+                            await auth_page.close() # 完事后销毁新标签页，深藏功与名
                             await logger.broadcast("✅ OIDC 本地鉴权闭环完成！")
                         except Exception as e:
                             await logger.broadcast(f"⚠️ 鉴权访问提示 (通常可忽略): {str(e)}")
@@ -115,9 +119,6 @@ async def run_deploy(logger, page=None):
         if process.returncode == 0:
             await logger.broadcast("✅ 集群配置下发成功！所有 Pod 已进入拉起状态。")
             
-            # ==========================================
-            # 最终修正：安全处理斜杠，仅输出 Kyma 直连面板地址
-            # ==========================================
             clean_kyma = new_kyma_domain.strip('/')
             clean_sub = sub_token.strip('/')
             
@@ -130,7 +131,7 @@ async def run_deploy(logger, page=None):
             if tg_bot_token and tg_chat_id:
                 await logger.broadcast("✈️ 正在推送最终部署结果至 Telegram...")
                 try:
-                    caption = f"🎉 **Sap Kyma Proxy 部署成功！**\n\n🔗 **节点订阅台地址:**\n`{kyma_url}`\n\n*(如遇 502 请耐心等待 1-2 分钟，Pod 正在后台拉起)*"
+                    caption = f"🎉 **SAP Kyma 节点部署成功！**\n\n🎯 **专属订阅面板地址:**\n`{kyma_url}`\n\n*(如遇 502 请耐心等待 1-2 分钟，Pod 正在后台拉起)*"
                     caption_escaped = shlex.quote(caption)
                     cmd_tg = f'curl -s -X POST "https://api.telegram.org/bot{tg_bot_token}/sendMessage" -d chat_id="{tg_chat_id}" -d text={caption_escaped} -d parse_mode="Markdown"'
                     push_proc = await asyncio.create_subprocess_shell(cmd_tg)
@@ -138,7 +139,7 @@ async def run_deploy(logger, page=None):
                 except Exception as e:
                     await logger.broadcast(f"⚠️ TG 推送小插曲: {str(e)}")
             
-            await logger.broadcast("🏁 【全流程结束】Sap Kyma Proxy 自动化流水线已安全退出。")
+            await logger.broadcast("🏁 【全流程结束】Sap Kyma Proxy 自动化流水线已安全退出。尽情享受你的节点吧！")
         else:
             stderr_text = "\n".join(error_log)
             await logger.broadcast(f"❌ Kubectl 部署失败:\n{stderr_text}")
