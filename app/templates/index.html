@@ -105,14 +105,14 @@
         // 使用美化版居中弹窗触发部署
         function startDeployment() {
             Swal.fire({
-                title: '启动部署引擎',
-                html: '即将拉起全自动爬虫流水线，这可能需要 <b>15-20 分钟</b>。<br>在此期间请勿关闭或重启容器容器。<br><br>确定要继续吗？',
+                title: '启动部署',
+                html: '即将全自动部署 Sap Kyma Proxy ，可能需要 <b>20-30 分钟</b>。<br>在此期间请勿关闭、重启服务器，请勿刷新网页。<br><br>确定要继续吗？',
                 icon: 'info',
                 showCancelButton: true,
                 confirmButtonColor: '#3b82f6',
                 cancelButtonColor: 'rgba(255,255,255,0.1)',
-                confirmButtonText: '🚀 确定执行',
-                cancelButtonText: '取消',
+                confirmButtonText: '确  定',
+                cancelButtonText: '取  消',
                 background: '#0f172a',
                 color: '#e5eefc',
                 customClass: {
@@ -123,7 +123,7 @@
                     // 初始化按钮状态
                     deployBtn.disabled = true;
                     deployBtn.style.background = "#3b82f6"; // 恢复默认蓝
-                    deployBtn.innerText = "⏳ 正在拉起矩阵...";
+                    deployBtn.innerText = "⏳ 正在部署";
                     appendLog(" 已下发部署指令 ", "#3b82f6");
 
                     try {
