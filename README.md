@@ -6,7 +6,7 @@ SAP_SUBACCOUNT	（SAP子账号名称）
 
 PANEL_PASSWORD	（部署面板密码）
 
-CHECK_TIME	    （运行时间）
+CHECK_TIME	    （运行时间GMT）
 
 ARGO_DOMAIN     （隧道域名）
 
