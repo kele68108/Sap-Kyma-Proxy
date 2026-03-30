@@ -4,7 +4,8 @@ import subprocess
 import asyncio
 import uuid
 
-async def run_deploy(logger):
+# 注意：这里增加了 page 参数
+async def run_deploy(logger, page=None):
     await logger.broadcast("⚙️ 部署引擎已接管，正在解析集群凭证...")
     
     if not os.path.exists("kubeconfig.yaml"):
@@ -52,7 +53,7 @@ async def run_deploy(logger):
         yaml_text = yaml_text.replace("YOUR_SUB_TOKEN", sub_token)
         yaml_text = yaml_text.replace("YOUR_TG_BOT_TOKEN", tg_bot_token)
         yaml_text = yaml_text.replace("YOUR_TG_CHAT_ID", tg_chat_id)
-        yaml_text = yaml_text.replace("YOUR_UUID", proxy_uuid)  # 替换 UUID
+        yaml_text = yaml_text.replace("YOUR_UUID", proxy_uuid)
 
         # 生成待部署文件
         with open("deploy_ready.yaml", "w") as f:
@@ -65,21 +66,63 @@ async def run_deploy(logger):
     # 3. 通过 Kubectl 执行物理部署
     await logger.broadcast("🚀 正在向 Kubernetes 集群下发 All in One 矩阵配置...")
     try:
+        # 杀手锏 1：注入 BROWSER=echo，防止 xdg-open 报错并强制其将 URL 打印到终端
+        custom_env = os.environ.copy()
+        custom_env["BROWSER"] = "echo"
+
         cmd = "kubectl --kubeconfig=kubeconfig.yaml apply -f deploy_ready.yaml"
         
         process = await asyncio.create_subprocess_shell(
             cmd,
+            env=custom_env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        stdout, stderr = await process.communicate()
+
+        output_log = []
+        error_log = []
+
+        # 杀手锏 2：开一个异步协程，实时读取 Kubectl 的控制台输出
+        async def handle_stream(stream, is_stderr=False):
+            while True:
+                line = await stream.readline()
+                if not line:
+                    break
+                line_str = line.decode('utf-8').strip()
+                if is_stderr:
+                    error_log.append(line_str)
+                else:
+                    output_log.append(line_str)
+
+                # 杀手锏 3：一旦发现 OIDC 授权服务器启动，立马派 Playwright 过去"串门"
+                if "http://localhost:" in line_str and page:
+                    match = re.search(r'(http://localhost:\d+)', line_str)
+                    if match:
+                        login_url = match.group(1)
+                        await logger.broadcast(f"🛂 拦截到 OIDC 唤醒请求: {login_url}")
+                        await logger.broadcast("🕵️‍♂️ 正在调用底层 Playwright 携带全局 Cookie 强行注入授权...")
+                        try:
+                            # 带着 SAP 登录状态去访问，直接秒过验证！
+                            await page.goto(login_url, timeout=30000)
+                            await logger.broadcast("✅ OIDC 本地鉴权闭环完成！")
+                        except Exception as e:
+                            await logger.broadcast(f"⚠️ 鉴权访问小插曲 (通常可忽略): {str(e)}")
+
+        # 并发读取 stdout 和 stderr
+        await asyncio.gather(
+            handle_stream(process.stdout, is_stderr=False),
+            handle_stream(process.stderr, is_stderr=True)
+        )
+
+        await process.wait()
 
         if process.returncode == 0:
             await logger.broadcast("✅ 集群配置下发成功！所有 Pod 已进入拉起状态。")
             await logger.broadcast("⏳ 请等待 2-3 分钟 AWS 分配负载均衡 IP，系统将自动把最终面板推送至你的 Telegram！")
             await logger.broadcast(f"🔗 面板访问直连 URL 将在初始化完成后生效。")
         else:
-            await logger.broadcast(f"❌ Kubectl 部署失败:\n{stderr.decode()}")
+            stderr_text = "\n".join(error_log)
+            await logger.broadcast(f"❌ Kubectl 部署失败:\n{stderr_text}")
             
     except Exception as e:
         await logger.broadcast(f"❌ 命令执行异常: {str(e)}")
