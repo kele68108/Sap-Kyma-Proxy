@@ -289,7 +289,7 @@ async def run_full_flow(logger):
                 raise Exception("页面上彻底未找到 Kubeconfig 凭证提取链接！")
 
             await logger.broadcast("🚀 自动化浏览器任务圆满结束，即将移交 K8s 部署引擎！")
-            await deployer.run_deploy(logger)
+            await deployer.run_deploy(logger, page)
 
         except Exception as e:
             current_url = page.url
