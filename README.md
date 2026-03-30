@@ -1,1 +1,21 @@
-# Sap-Kyma-Proxy
+SAP_USER	      （SAP账号）
+
+SAP_PASS	      （SAP密码）
+
+SAP_SUBACCOUNT	（SAP子账号名称）
+
+PANEL_PASSWORD	（部署面板密码）
+
+CHECK_TIME	    （运行时间）
+
+ARGO_DOMAIN     （隧道域名）
+
+ARGO_TOKEN	    （隧道TOKEN）
+
+PROXY_UUID	    （节点UUID）
+
+SUB_TOKEN	      （订阅台TOKEN）
+
+TG_BOT_TOKEN	  （TG TOKEN）
+
+TG_CHAT_ID	    （TG ID）
