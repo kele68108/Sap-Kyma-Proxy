@@ -4,11 +4,21 @@ FROM mcr.microsoft.com/playwright/python:v1.48.0-jammy
 # 设置工作目录
 WORKDIR /app
 
-# 下载并安装 kubectl，用于和 Kyma 集群交互部署 YAML
+# 安装必要的解压工具
+RUN apt-get update && apt-get install -y unzip wget
+
+# 下载并安装 kubectl
 RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
     && chmod +x kubectl \
     && mv kubectl /usr/local/bin/
 
+# 下载并安装 kubelogin (OIDC 认证插件)
+RUN wget https://github.com/int128/kubelogin/releases/download/v1.28.0/kubelogin_linux_amd64.zip \
+    && unzip kubelogin_linux_amd64.zip \
+    && mv kubelogin /usr/local/bin/kubectl-oidc_login \
+    && chmod +x /usr/local/bin/kubectl-oidc_login \
+    && rm kubelogin_linux_amd64.zip
+    
 # 拷贝依赖列表并安装 Python 库
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
