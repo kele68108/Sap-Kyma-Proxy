@@ -3,20 +3,26 @@
 <head>
     <meta charset="UTF-8">
     <title>控制台 - Kyma Proxy</title>
+    
+    <link href="https://cdn.jsdelivr.net/npm/@sweetalert2/theme-dark@4/dark.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.js"></script>
+
     <style>
         :root { --bg: #0b1220; --panel: rgba(15, 23, 42, 0.88); --accent: #3b82f6; --text: #e5eefc; --term-bg: #000; --term-text: #00ff00; }
         body { margin: 0; padding: 20px; background: var(--bg); color: var(--text); font-family: system-ui; height: 100vh; box-sizing: border-box; display: flex; flex-direction: column; }
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid #334155; padding-bottom: 15px; }
         .main-container { display: flex; gap: 20px; flex: 1; min-height: 0; }
         
-        /* 左侧配置面板 */
-        .config-panel { width: 350px; background: var(--panel); border-radius: 16px; padding: 20px; border: 1px solid #334155; display: flex; flex-direction: column; }
-        .info-group { margin-bottom: 15px; }
-        .info-label { font-size: 12px; color: #94a3b8; text-transform: uppercase; margin-bottom: 5px; }
-        .info-value { font-family: monospace; background: #1e293b; padding: 10px; border-radius: 8px; font-size: 14px; word-break: break-all; }
-        .deploy-btn { margin-top: auto; padding: 16px; background: var(--accent); color: white; border: none; border-radius: 12px; font-weight: bold; font-size: 16px; cursor: pointer; transition: 0.2s; }
-        .deploy-btn:hover { background: #2563eb; }
-        .deploy-btn:disabled { background: #475569; cursor: not-allowed; }
+        /* 优化后的左侧极简面板 */
+        .config-panel { width: 320px; background: var(--panel); border-radius: 16px; padding: 24px; border: 1px solid #334155; display: flex; flex-direction: column; }
+        .account-card { background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(148, 163, 184, 0.2); padding: 20px; border-radius: 12px; text-align: center; margin-top: 10px; margin-bottom: 20px;}
+        .account-title { font-size: 13px; color: #94a3b8; text-transform: uppercase; margin-bottom: 8px; letter-spacing: 1px;}
+        .account-email { font-family: monospace; font-size: 16px; color: #60a5fa; font-weight: bold; word-break: break-all;}
+        
+        /* 部署按钮增强 */
+        .deploy-btn { margin-top: auto; padding: 16px; background: var(--accent); color: white; border: none; border-radius: 12px; font-weight: bold; font-size: 16px; cursor: pointer; transition: background-color 0.3s, filter 0.2s; }
+        .deploy-btn:hover { filter: brightness(1.1); }
+        .deploy-btn:disabled { cursor: not-allowed; filter: brightness(0.8); }
 
         /* 右侧终端模拟器 */
         .terminal-panel { flex: 1; background: var(--term-bg); border-radius: 16px; padding: 20px; border: 1px solid #334155; overflow-y: auto; font-family: 'Courier New', Courier, monospace; box-shadow: inset 0 0 20px rgba(0,0,0,0.8); }
@@ -24,33 +30,27 @@
         .log-time { color: #888; margin-right: 10px; }
         .blinking-cursor { display: inline-block; width: 8px; height: 15px; background-color: var(--term-text); animation: blink 1s step-end infinite; vertical-align: text-bottom; margin-left: 5px;}
         @keyframes blink { 50% { opacity: 0; } }
+
+        /* 弹窗自定义圆角 */
+        .swal-custom-border { border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 20px !important; }
     </style>
 </head>
 <body>
     <div class="header">
-        <h2>🚀 Sap Kyma Proxy 部署面板</h2>
-        <div style="font-size: 14px; color: #94a3b8;">Status: <span style="color: #22c55e;">● 在线</span></div>
+        <h2 style="margin: 0;">🚀 Sap Kyma Proxy 部署控制台</h2>
+        <div style="font-size: 14px; color: #94a3b8;">Status: <span style="color: #22c55e; font-weight: bold;">● 在线</span></div>
     </div>
 
     <div class="main-container">
         <div class="config-panel">
-            <h3 style="margin-top: 0;">⚙️ 系统环境变量</h3>
-            <div class="info-group">
-                <div class="info-label">SAP 登录账号</div>
-                <div class="info-value">{{ config.sap_user }}</div>
+            <h3 style="margin-top: 0; font-size: 18px; margin-bottom: 5px;">⚙️ 当前任务配置</h3>
+            
+            <div class="account-card">
+                <div class="account-title">SAP 目标账户</div>
+                <div class="account-email">{{ config.sap_user }}</div>
             </div>
-            <div class="info-group">
-                <div class="info-label">Argo 隧道域名</div>
-                <div class="info-value">{{ config.argo_domain }}</div>
-            </div>
-            <div class="info-group">
-                <div class="info-label">订阅路径 Token</div>
-                <div class="info-value">/{{ config.sub_token }}/</div>
-            </div>
-            <div style="font-size: 12px; color: #ef4444; margin-bottom: 20px; line-height: 1.5;">
-                ⚠️ 提示：所有配置均由 Docker 环境变量注入，修改配置请重启容器并更新环境变量。
-            </div>
-            <button id="deployBtn" class="deploy-btn" onclick="startDeployment()">⚡ 开始自动部署</button>
+            
+            <div style="flex: 1;"></div> <button id="deployBtn" class="deploy-btn" onclick="startDeployment()">⚡ 开始自动部署</button>
         </div>
 
         <div class="terminal-panel" id="terminal">
@@ -68,8 +68,23 @@
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const ws = new WebSocket(`${protocol}//${window.location.host}/ws/logs`);
 
+        // 监听后端日志并处理按钮状态
         ws.onmessage = function(event) {
-            appendLog(event.data);
+            const msg = event.data;
+            appendLog(msg);
+            
+            // 部署成功判定
+            if (msg.includes("【全流程结束】") || msg.includes("部署圆满完成")) {
+                deployBtn.innerText = "✅ 部署成功";
+                deployBtn.style.background = "#22c55e"; // 护眼绿
+                deployBtn.disabled = true; 
+            } 
+            // 部署坠机判定
+            else if (msg.includes("❌ 错误详情") || msg.includes("❌ Kubectl 部署失败") || msg.includes("致命错误")) {
+                deployBtn.innerText = "❌ 部署坠机 (点击重试)";
+                deployBtn.style.background = "#ef4444"; // 警戒红
+                deployBtn.disabled = false;
+            }
         };
 
         ws.onclose = function() {
@@ -87,21 +102,41 @@
             terminal.scrollTop = terminal.scrollHeight; // 自动滚到底部
         }
 
-        async function startDeployment() {
-            if (!confirm("即将启动自动化引擎，这可能需要 15-20 分钟。\n在此期间请勿关闭容器。\n确定要继续吗？")) return;
-            
-            deployBtn.disabled = true;
-            deployBtn.innerText = "⏳ 正在部署中...";
-            appendLog(" 已启动部署指令 ", "#3b82f6");
+        // 使用美化版居中弹窗触发部署
+        function startDeployment() {
+            Swal.fire({
+                title: '启动部署引擎',
+                html: '即将拉起全自动爬虫流水线，这可能需要 <b>15-20 分钟</b>。<br>在此期间请勿关闭或重启容器容器。<br><br>确定要继续吗？',
+                icon: 'info',
+                showCancelButton: true,
+                confirmButtonColor: '#3b82f6',
+                cancelButtonColor: 'rgba(255,255,255,0.1)',
+                confirmButtonText: '🚀 确定执行',
+                cancelButtonText: '取消',
+                background: '#0f172a',
+                color: '#e5eefc',
+                customClass: {
+                    popup: 'swal-custom-border'
+                }
+            }).then(async (result) => {
+                if (result.isConfirmed) {
+                    // 初始化按钮状态
+                    deployBtn.disabled = true;
+                    deployBtn.style.background = "#3b82f6"; // 恢复默认蓝
+                    deployBtn.innerText = "⏳ 正在拉起矩阵...";
+                    appendLog(" 已下发部署指令 ", "#3b82f6");
 
-            try {
-                const res = await fetch('/api/deploy', { method: 'POST' });
-                if (!res.ok) throw new Error("API 请求失败");
-            } catch (err) {
-                appendLog("❌ 触发失败: " + err.message, "#ef4444");
-                deployBtn.disabled = false;
-                deployBtn.innerText = "⚡ 开始自动部署";
-            }
+                    try {
+                        const res = await fetch('/api/deploy', { method: 'POST' });
+                        if (!res.ok) throw new Error("API 请求失败");
+                    } catch (err) {
+                        appendLog("❌ 触发失败: " + err.message, "#ef4444");
+                        deployBtn.disabled = false;
+                        deployBtn.style.background = "#ef4444";
+                        deployBtn.innerText = "❌ 触发异常 (点击重试)";
+                    }
+                }
+            });
         }
     </script>
 </body>
