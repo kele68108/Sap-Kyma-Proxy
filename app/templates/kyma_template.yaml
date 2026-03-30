@@ -221,6 +221,29 @@ data:
           background: var(--accent); 
         }
         .copy-btn:hover, .tg-btn:hover { background: #2563eb; }
+
+        /* === 完美居中弹窗样式 === */
+        .custom-modal {
+          position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 9999;
+          display: flex; align-items: center; justify-content: center;
+          opacity: 0; pointer-events: none; transition: opacity 0.25s ease;
+          backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
+        }
+        .custom-modal.active { opacity: 1; pointer-events: auto; }
+        .custom-modal-content {
+          background: var(--panel); border: 1px solid var(--line); border-radius: 20px;
+          padding: 30px 24px; width: 85%; max-width: 350px; text-align: center;
+          transform: scale(0.9); transition: transform 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+          box-shadow: 0 25px 50px -12px rgba(0,0,0,0.6);
+        }
+        .custom-modal.active .custom-modal-content { transform: scale(1); }
+        .custom-modal-text { margin-bottom: 26px; font-size: 16px; line-height: 1.6; color: var(--text); white-space: pre-wrap;}
+        .custom-modal-btn {
+          background: var(--accent); color: white; border: none; padding: 12px 24px;
+          border-radius: 12px; font-weight: bold; font-size: 15px; cursor: pointer; 
+          transition: 0.2s; width: 100%;
+        }
+        .custom-modal-btn:hover { background: #2563eb; transform: translateY(-1px); }
         
         @media (max-width: 980px){ .content-body{ grid-template-columns: 1fr; } .action-group { flex-direction: column; } }
       </style>
@@ -268,6 +291,32 @@ data:
         </section>
       </div>
       <script>
+        // === 居中弹窗逻辑 ===
+        function showModal(text) {
+          let modal = document.getElementById('customModal');
+          if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'customModal';
+            modal.className = 'custom-modal';
+            modal.innerHTML = `
+              <div class="custom-modal-content">
+                <div class="custom-modal-text" id="customModalText"></div>
+                <button class="custom-modal-btn" onclick="closeModal()">我知道了</button>
+              </div>
+            `;
+            document.body.appendChild(modal);
+          }
+          document.getElementById('customModalText').innerHTML = text;
+          // 触发重绘以播放动画
+          void modal.offsetWidth;
+          modal.classList.add('active');
+        }
+        
+        function closeModal() {
+          const modal = document.getElementById('customModal');
+          if(modal) modal.classList.remove('active');
+        }
+
         const nodes = {
           direct: "vless://YOUR_UUID@YOUR_KYMA_DOMAIN:443?encryption=none&security=tls&sni=YOUR_KYMA_DOMAIN&type=ws&path=%2Fdirect#SAP-KYMA-VLESS",
           argo: "vless://YOUR_UUID@sin.cfip.oxxxx.de:443?encryption=none&security=tls&sni=YOUR_ARGO_DOMAIN&type=ws&path=%2Ftunnel#SAP-KYMA-ARGO",
@@ -313,11 +362,10 @@ data:
 
         document.getElementById('copyBtn').addEventListener('click', () => {
           navigator.clipboard.writeText(rawLink).then(() => {
-            alert(rawLink.includes('\n') ? '已复制所有明文节点！' : '已复制节点明文链接！');
+            showModal(rawLink.includes('\n') ? '✅ 已复制所有明文节点！' : '✅ 已复制节点明文链接！');
           });
         });
 
-        // Telegram 原生 API 手动静默推送逻辑
         document.getElementById('tgBtn').addEventListener('click', () => {
           const btnText = document.querySelector('#tgBtn span');
           const originalText = btnText.innerText;
@@ -345,11 +393,11 @@ data:
           })
           .then(res => res.json())
           .then(data => {
-            if(data.ok) alert('✅ 已成功推送到你的 Telegram Bot！');
-            else alert('❌ 推送失败：' + data.description);
+            if(data.ok) showModal('✅ 已成功推送到你的 Telegram Bot！');
+            else showModal('❌ 推送失败：\n' + data.description);
           })
           .catch(err => {
-            alert('❌ 推送异常，请检查网络！');
+            showModal('❌ 推送异常，请检查网络！');
           })
           .finally(() => {
             btnText.innerText = originalText;
