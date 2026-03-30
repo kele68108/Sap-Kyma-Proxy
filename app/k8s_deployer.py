@@ -118,11 +118,25 @@ async def run_deploy(logger, page=None):
 
         if process.returncode == 0:
             await logger.broadcast("✅ 集群配置下发成功！所有 Pod 已进入拉起状态。")
-            await logger.broadcast("⏳ 请等待 2-3 分钟 AWS 分配负载均衡 IP，系统将自动把最终面板推送至你的 Telegram！")
-            await logger.broadcast(f"🔗 面板访问直连 URL 将在初始化完成后生效。")
+            
+            final_url = f"https://{argo_domain}{sub_token}"
+            await logger.broadcast(f"🎉 部署圆满完成！Argo 隧道正在疯狂建联中...")
+            await logger.broadcast(f"🔗 你的专属节点订阅面板地址: {final_url}")
+            
+            # 发送胜利的 TG 通知
+            if tg_bot_token and tg_chat_id:
+                await logger.broadcast("✈️ 正在推送最终部署结果至 Telegram...")
+                try:
+                    import shlex
+                    caption = f"🎉 **SAP Kyma 节点部署成功！**\n\n🔗 **订阅面板地址:**\n`{final_url}`\n\n*(如遇 502 请耐心等待 1-2 分钟，Argo 隧道正在后台初始化)*"
+                    caption_escaped = shlex.quote(caption)
+                    cmd = f'curl -s -X POST "https://api.telegram.org/bot{tg_bot_token}/sendMessage" -d chat_id="{tg_chat_id}" -d text={caption_escaped} -d parse_mode="Markdown"'
+                    push_proc = await asyncio.create_subprocess_shell(cmd)
+                    await push_proc.communicate()
+                except Exception as e:
+                    await logger.broadcast(f"⚠️ TG 推送小插曲: {str(e)}")
+            
+            await logger.broadcast("🏁 【全流程结束】Sap Kyma Proxy 自动化流水线已安全退出。尽情享受你的节点吧！")
         else:
             stderr_text = "\n".join(error_log)
             await logger.broadcast(f"❌ Kubectl 部署失败:\n{stderr_text}")
-            
-    except Exception as e:
-        await logger.broadcast(f"❌ 命令执行异常: {str(e)}")
