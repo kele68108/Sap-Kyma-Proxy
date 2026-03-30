@@ -1,10 +1,10 @@
 import os
 import re
-import subprocess
 import asyncio
 import uuid
+import shlex
 
-# 注意：这里增加了 page 参数
+# 关键：新增了 page 参数，用于接收从 sap_bot 传过来的已登录浏览器上下文
 async def run_deploy(logger, page=None):
     await logger.broadcast("⚙️ 部署引擎已接管，正在解析集群凭证...")
     
@@ -13,7 +13,7 @@ async def run_deploy(logger, page=None):
         return
 
     # 1. 读取并提取新 Cluster ID
-    with open("kubeconfig.yaml", "r") as f:
+    with open("kubeconfig.yaml", "r", encoding="utf-8") as f:
         config_content = f.read()
 
     match = re.search(r"server:\s*https://api\.(c-[a-z0-9]+)\.kyma", config_content)
@@ -28,7 +28,7 @@ async def run_deploy(logger, page=None):
     # 2. 读取 YAML 模板并进行变量渲染
     await logger.broadcast("📝 正在将环境变量注入最终 YAML 配置矩阵...")
     try:
-        with open("app/templates/kyma_template.yaml", "r") as f:
+        with open("app/templates/kyma_template.yaml", "r", encoding="utf-8") as f:
             yaml_text = f.read()
 
         # 环境变量列表
@@ -56,7 +56,7 @@ async def run_deploy(logger, page=None):
         yaml_text = yaml_text.replace("YOUR_UUID", proxy_uuid)
 
         # 生成待部署文件
-        with open("deploy_ready.yaml", "w") as f:
+        with open("deploy_ready.yaml", "w", encoding="utf-8") as f:
             f.write(yaml_text)
             
     except Exception as e:
@@ -88,7 +88,7 @@ async def run_deploy(logger, page=None):
                 line = await stream.readline()
                 if not line:
                     break
-                line_str = line.decode('utf-8').strip()
+                line_str = line.decode('utf-8', errors='ignore').strip()
                 if is_stderr:
                     error_log.append(line_str)
                 else:
@@ -96,7 +96,8 @@ async def run_deploy(logger, page=None):
 
                 # 杀手锏 3：一旦发现 OIDC 授权服务器启动，立马派 Playwright 过去"串门"
                 if "http://localhost:" in line_str and page:
-                    match = re.search(r'(http://localhost:\d+)', line_str)
+                    # 匹配 localhost 地址 (包容端口和可能的路径)
+                    match = re.search(r'(http://localhost:\d+(?:/[^\s]*)?)', line_str)
                     if match:
                         login_url = match.group(1)
                         await logger.broadcast(f"🛂 拦截到 OIDC 唤醒请求: {login_url}")
@@ -106,7 +107,8 @@ async def run_deploy(logger, page=None):
                             await page.goto(login_url, timeout=30000)
                             await logger.broadcast("✅ OIDC 本地鉴权闭环完成！")
                         except Exception as e:
-                            await logger.broadcast(f"⚠️ 鉴权访问小插曲 (通常可忽略): {str(e)}")
+                            # 这里通常即使超时也说明请求发过去了，可以直接忽略报错
+                            await logger.broadcast(f"⚠️ 鉴权访问提示 (通常可忽略): {str(e)}")
 
         # 并发读取 stdout 和 stderr
         await asyncio.gather(
@@ -116,10 +118,13 @@ async def run_deploy(logger, page=None):
 
         await process.wait()
 
+        # 4. 部署结果判断与扫尾
         if process.returncode == 0:
             await logger.broadcast("✅ 集群配置下发成功！所有 Pod 已进入拉起状态。")
             
+            # 格式化面板 URL（根据你的 Nginx/Argo 路由配置，这里默认拼接）
             final_url = f"https://{argo_domain}{sub_token}"
+            
             await logger.broadcast(f"🎉 部署圆满完成！Argo 隧道正在疯狂建联中...")
             await logger.broadcast(f"🔗 你的专属节点订阅面板地址: {final_url}")
             
@@ -127,11 +132,10 @@ async def run_deploy(logger, page=None):
             if tg_bot_token and tg_chat_id:
                 await logger.broadcast("✈️ 正在推送最终部署结果至 Telegram...")
                 try:
-                    import shlex
                     caption = f"🎉 **SAP Kyma 节点部署成功！**\n\n🔗 **订阅面板地址:**\n`{final_url}`\n\n*(如遇 502 请耐心等待 1-2 分钟，Argo 隧道正在后台初始化)*"
                     caption_escaped = shlex.quote(caption)
-                    cmd = f'curl -s -X POST "https://api.telegram.org/bot{tg_bot_token}/sendMessage" -d chat_id="{tg_chat_id}" -d text={caption_escaped} -d parse_mode="Markdown"'
-                    push_proc = await asyncio.create_subprocess_shell(cmd)
+                    cmd_tg = f'curl -s -X POST "https://api.telegram.org/bot{tg_bot_token}/sendMessage" -d chat_id="{tg_chat_id}" -d text={caption_escaped} -d parse_mode="Markdown"'
+                    push_proc = await asyncio.create_subprocess_shell(cmd_tg)
                     await push_proc.communicate()
                 except Exception as e:
                     await logger.broadcast(f"⚠️ TG 推送小插曲: {str(e)}")
@@ -140,3 +144,6 @@ async def run_deploy(logger, page=None):
         else:
             stderr_text = "\n".join(error_log)
             await logger.broadcast(f"❌ Kubectl 部署失败:\n{stderr_text}")
+            
+    except Exception as e:
+        await logger.broadcast(f"❌ 命令执行异常: {str(e)}")
